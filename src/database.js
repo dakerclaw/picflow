@@ -78,15 +78,45 @@ async function openDatabase() {
 
   db = new SQL.Database(buffer);
 
+  // 先尝试创建新格式表（email/password 可为空）
   db.run(`CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
-    email TEXT NOT NULL UNIQUE,
-    password TEXT NOT NULL,
+    email TEXT DEFAULT '',
+    password TEXT DEFAULT '',
     bio TEXT DEFAULT '',
     avatar TEXT DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
+
+  // 检测旧表结构并迁移
+  try {
+    const colInfo = db.exec("PRAGMA table_info(users)");
+    if (colInfo.length > 0) {
+      const cols = colInfo[0].values;
+      const emailNotNull = cols.some(r => r[1] === 'email' && r[3] === 1); // notnull=1
+      if (emailNotNull) {
+        console.log('Migrating users table to flexible schema...');
+        db.run('BEGIN');
+        db.run(`CREATE TABLE users_new (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL UNIQUE,
+          email TEXT DEFAULT '',
+          password TEXT DEFAULT '',
+          bio TEXT DEFAULT '',
+          avatar TEXT DEFAULT '',
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )`);
+        db.run('INSERT INTO users_new SELECT id, username, email, password, bio, avatar, created_at FROM users');
+        db.run('DROP TABLE users');
+        db.run('ALTER TABLE users_new RENAME TO users');
+        db.run('COMMIT');
+        console.log('Users table migration complete.');
+      }
+    }
+  } catch (e) {
+    console.log('Migration check skipped:', e.message);
+  }
 
   db.run(`CREATE TABLE IF NOT EXISTS photos (
     id TEXT PRIMARY KEY,

@@ -6,23 +6,23 @@ import { generateToken, authRequired } from '../middleware/auth.js';
 
 const router = Router();
 
+// 注册：仅用户名必填，邮箱和密码可为空
 router.post('/register', (req, res) => {
-  const { username, email, password } = req.body;
+  const { username } = req.body;
+  const email = req.body.email || '';
+  const password = req.body.password || '';
 
-  if (!username || !email || !password) {
-    return res.status(400).json({ error: '用户名、邮箱和密码为必填项' });
-  }
-  if (password.length < 6) {
-    return res.status(400).json({ error: '密码不能少于 6 位' });
+  if (!username) {
+    return res.status(400).json({ error: '用户名为必填项' });
   }
 
-  const existing = db.prepare('SELECT id FROM users WHERE email = ? OR username = ?').get(email, username);
+  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
   if (existing) {
-    return res.status(409).json({ error: '用户名或邮箱已被注册' });
+    return res.status(409).json({ error: '用户名已被注册' });
   }
 
   const id = uuidv4();
-  const hashed = bcrypt.hashSync(password, 10);
+  const hashed = password ? bcrypt.hashSync(password, 10) : '';
   db.prepare('INSERT INTO users (id, username, email, password) VALUES (?, ?, ?, ?)').run(id, username, email, hashed);
 
   const user = { id, username, email, bio: '', avatar: '' };
@@ -30,16 +30,17 @@ router.post('/register', (req, res) => {
   res.status(201).json({ user, token });
 });
 
+// 登录：只用用户名，账户存在即允许登录（不校验密码）
 router.post('/login', (req, res) => {
-  const { email, password } = req.body;
+  const { username } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ error: '邮箱和密码为必填项' });
+  if (!username) {
+    return res.status(400).json({ error: '请输入用户名' });
   }
 
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
-  if (!user || !bcrypt.compareSync(password, user.password)) {
-    return res.status(401).json({ error: '邮箱或密码不正确' });
+  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  if (!user) {
+    return res.status(401).json({ error: '用户名不存在' });
   }
 
   const token = generateToken(user);
