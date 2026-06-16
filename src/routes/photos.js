@@ -118,10 +118,15 @@ router.post('/', authRequired, upload.array('files', 20), (req, res) => {
   const insertMany = db.transaction((files) => {
     for (const file of files) {
       const id = uuidv4();
-      const title = file.originalname.replace(/\.[^/.]+$/, '');
-      insert.run(id, file.filename, file.originalname, title, file.size, file.mimetype, req.user.id);
+      // 修复中文文件名乱码：multer 在某些环境下 originalname 可能被 latin1 编码
+      let originalName = file.originalname;
+      try {
+        originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+      } catch { /* 保持原值 */ }
+      const title = originalName.replace(/\.[^/.]+$/, '');
+      insert.run(id, file.filename, originalName, title, file.size, file.mimetype, req.user.id);
       photos.push({
-        id, filename: file.filename, original_name: file.originalname,
+        id, filename: file.filename, original_name: originalName,
         title, description: '', tags: '[]', size: file.size,
         mime_type: file.mimetype, width: 800, height: 600,
         uploader_id: req.user.id, uploader_name: req.user.username,
