@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import db from './database.js';
 import authRoutes from './routes/auth.js';
 import photoRoutes from './routes/photos.js';
+import settingsRoutes from './routes/settings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -26,6 +27,7 @@ app.use((_req, res, next) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/photos', photoRoutes);
+app.use('/api/settings', settingsRoutes);
 
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 

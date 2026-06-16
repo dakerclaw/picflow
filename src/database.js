@@ -118,6 +118,39 @@ async function openDatabase() {
     console.log('Migration check skipped:', e.message);
   }
 
+  // 检测并添加 is_admin 列
+  try {
+    const colInfo = db.exec("PRAGMA table_info(users)");
+    if (colInfo.length > 0) {
+      const cols = colInfo[0].values;
+      const hasIsAdmin = cols.some(r => r[1] === 'is_admin');
+      if (!hasIsAdmin) {
+        db.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
+        console.log('Added is_admin column to users table.');
+      }
+    }
+  } catch (e) {
+    console.log('is_admin migration check skipped:', e.message);
+  }
+
+  // 设置表
+  db.run(`CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  )`);
+
+  // 插入默认设置
+  const defaults = [
+    ['site_name', 'PicFlow'],
+    ['site_title', 'PicFlow - 图片分享'],
+    ['site_icon', ''],
+    ['footer_copyright', `© ${new Date().getFullYear()} PicFlow`],
+  ];
+  const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  for (const [k, v] of defaults) {
+    insertSetting.run(k, v);
+  }
+
   db.run(`CREATE TABLE IF NOT EXISTS photos (
     id TEXT PRIMARY KEY,
     filename TEXT NOT NULL,

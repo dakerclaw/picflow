@@ -23,11 +23,14 @@ router.post('/register', (req, res) => {
 
   const id = uuidv4();
   const hashed = password ? bcrypt.hashSync(password, 10) : '';
-  db.prepare('INSERT INTO users (id, username, email, password) VALUES (?, ?, ?, ?)').run(id, username, email, hashed);
+  // 如果这是第一个用户，自动设为管理员
+  const userCount = db.prepare('SELECT COUNT(*) as cnt FROM users').get().cnt;
+  const isAdmin = userCount === 0 ? 1 : 0;
+  db.prepare('INSERT INTO users (id, username, email, password, is_admin) VALUES (?, ?, ?, ?, ?)').run(id, username, email, hashed, isAdmin);
 
-  const user = { id, username, email, bio: '', avatar: '' };
+  const user = db.prepare('SELECT id, username, email, bio, avatar, is_admin FROM users WHERE id = ?').get(id);
   const token = generateToken(user);
-  res.status(201).json({ user, token });
+  res.status(201).json({ user: { ...user, is_admin: user.is_admin || 0 }, token });
 });
 
 // 登录：只用用户名，账户存在即允许登录（不校验密码）
@@ -45,15 +48,15 @@ router.post('/login', (req, res) => {
 
   const token = generateToken(user);
   res.json({
-    user: { id: user.id, username: user.username, email: user.email, bio: user.bio, avatar: user.avatar, created_at: user.created_at },
+    user: { id: user.id, username: user.username, email: user.email, bio: user.bio, avatar: user.avatar, is_admin: user.is_admin || 0, created_at: user.created_at },
     token,
   });
 });
 
 router.get('/me', authRequired, (req, res) => {
-  const user = db.prepare('SELECT id, username, email, bio, avatar, created_at FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, username, email, bio, avatar, is_admin, created_at FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: '用户不存在' });
-  res.json({ user });
+  res.json({ user: { ...user, is_admin: user.is_admin || 0 } });
 });
 
 router.put('/me', authRequired, (req, res) => {

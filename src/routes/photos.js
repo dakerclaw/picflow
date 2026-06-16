@@ -79,16 +79,31 @@ function getImageDimensions(filepath) {
 const router = Router();
 
 router.get('/', authOptional, (req, res) => {
-  const { search, page = 1, limit = 50 } = req.query;
+  const { search, year, month, day, page = 1, limit = 50 } = req.query;
   const offset = (Math.max(1, +page) - 1) * Math.min(100, +limit);
   const sqlLimit = Math.min(100, +limit);
 
   let where = '';
   const params = [];
+  const conditions = [];
+
   if (search) {
-    where = 'WHERE (p.title LIKE ? OR p.tags LIKE ? OR u.username LIKE ?)';
+    conditions.push('(p.title LIKE ? OR p.tags LIKE ? OR u.username LIKE ?)');
     const q = `%${search}%`;
     params.push(q, q, q);
+  }
+  if (year) {
+    conditions.push(`p.created_at LIKE '${year}-%'`);
+  }
+  if (year && month) {
+    conditions.push(`p.created_at LIKE '${year}-${String(month).padStart(2, '0')}-%'`);
+  }
+  if (year && month && day) {
+    conditions.push(`p.created_at LIKE '${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}%'`);
+  }
+
+  if (conditions.length > 0) {
+    where = 'WHERE ' + conditions.join(' AND ');
   }
 
   const userId = req.user?.id;
