@@ -83,6 +83,79 @@ docker compose up -d
 
 访问 `http://服务器IP:3000`
 
+## 🔄 更新方式
+
+### Docker 部署更新
+
+```bash
+cd ~/picflow
+git pull
+docker compose down
+docker compose up -d --build
+```
+
+> 数据库文件和上传的图片存储在 `data/` 和 `uploads/` 目录，更新不会丢失数据。
+
+### PM2 部署更新
+
+```bash
+cd ~/picflow
+git pull
+npm install
+pm2 restart picflow
+```
+
+### systemd 部署更新
+
+```bash
+cd ~/picflow
+git pull
+npm install
+sudo systemctl restart picflow
+```
+
+### nohup 部署更新
+
+```bash
+cd ~/picflow
+git pull
+npm install
+kill $(pgrep -f "node src/index.js")
+nohup npm start > picflow.log 2>&1 &
+```
+
+## 🗑 卸载方式
+
+### Docker 卸载
+
+```bash
+docker compose down --rmi all --volumes
+cd ..
+rm -rf picflow
+```
+
+> `--rmi all` 删除镜像，`--volumes` 删除数据卷。**此操作会删除所有图片和数据库，请提前备份！**
+
+### PM2 卸载
+
+```bash
+pm2 stop picflow
+pm2 delete picflow
+cd ..
+rm -rf picflow
+```
+
+### systemd 卸载
+
+```bash
+sudo systemctl stop picflow
+sudo systemctl disable picflow
+sudo rm /etc/systemd/system/picflow.service
+sudo systemctl daemon-reload
+cd ..
+rm -rf picflow
+```
+
 ## 📦 手动部署
 
 ```bash
