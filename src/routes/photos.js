@@ -29,6 +29,53 @@ const upload = multer({
   },
 });
 
+// 纯 JS 图片尺寸解析（零依赖）
+function getImageDimensions(filepath) {
+  try {
+    const fd = fs.openSync(filepath, 'r');
+    const head = Buffer.alloc(64);
+    fs.readSync(fd, head, 0, 64, 0);
+    fs.closeSync(fd);
+
+    // JPEG
+    if (head[0] === 0xFF && head[1] === 0xD8) {
+      let i = 2;
+      while (i < head.length - 9) {
+        if (head[i] !== 0xFF) break;
+        const marker = head[i + 1];
+        if (marker === 0xC0 || marker === 0xC2) {
+          return { width: head.readUInt16BE(i + 7), height: head.readUInt16BE(i + 5) };
+        }
+        i += 2 + head.readUInt16BE(i + 2);
+      }
+    }
+
+    // PNG
+    if (head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4E && head[3] === 0x47) {
+      return { width: head.readUInt32BE(16), height: head.readUInt32BE(20) };
+    }
+
+    // GIF
+    if (head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46) {
+      return { width: head.readUInt16LE(6), height: head.readUInt16LE(8) };
+    }
+
+    // WebP
+    if (head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46 &&
+        head[8] === 0x57 && head[9] === 0x45 && head[10] === 0x42 && head[11] === 0x50 &&
+        head[12] === 0x56 && head[13] === 0x50 && head[14] === 0x38) {
+      // VP8X
+      if (head[15] === 0x58) return { width: (head.readUInt32LE(24) & 0xFFFFFF) + 1, height: (head.readUInt32LE(27) & 0xFFFFFF) + 1 };
+      // VP8L
+      if (head[15] === 0x4C) {
+        const b0 = head[21], b1 = head[22], b2 = head[23], b3 = head[24];
+        return { width: ((b1 & 0x3F) << 8 | b0) + 1, height: ((b3 & 0xF) << 10 | b2 << 2 | (b1 & 0xC0) >> 6) + 1 };
+      }
+    }
+  } catch { /* ignore */ }
+  return { width: 800, height: 600 };
+}
+
 const router = Router();
 
 router.get('/', authOptional, (req, res) => {
@@ -111,24 +158,25 @@ router.post('/', authRequired, upload.array('files', 20), (req, res) => {
 
   const photos = [];
   const insert = db.prepare(`
-    INSERT INTO photos (id, filename, original_name, title, description, tags, size, mime_type, uploader_id)
-    VALUES (?, ?, ?, ?, '', '[]', ?, ?, ?)
+    INSERT INTO photos (id, filename, original_name, title, description, tags, size, mime_type, width, height, uploader_id)
+    VALUES (?, ?, ?, ?, '', '[]', ?, ?, ?, ?, ?)
   `);
 
   const insertMany = db.transaction((files) => {
     for (const file of files) {
       const id = uuidv4();
-      // 修复中文文件名乱码：multer 在某些环境下 originalname 可能被 latin1 编码
       let originalName = file.originalname;
       try {
         originalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
       } catch { /* 保持原值 */ }
       const title = originalName.replace(/\.[^/.]+$/, '');
-      insert.run(id, file.filename, originalName, title, file.size, file.mimetype, req.user.id);
+      const filepath = path.join(UPLOAD_DIR, file.filename);
+      const dims = getImageDimensions(filepath);
+      insert.run(id, file.filename, originalName, title, file.size, file.mimetype, dims.width, dims.height, req.user.id);
       photos.push({
         id, filename: file.filename, original_name: originalName,
         title, description: '', tags: '[]', size: file.size,
-        mime_type: file.mimetype, width: 800, height: 600,
+        mime_type: file.mimetype, width: dims.width, height: dims.height,
         uploader_id: req.user.id, uploader_name: req.user.username,
         likes_count: 0, downloads_count: 0, is_liked: 0,
         created_at: new Date().toISOString(),
