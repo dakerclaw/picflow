@@ -1,0 +1,16 @@
+services:
+  picflow:
+    build: .
+    container_name: picflow
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - JWT_SECRET=${JWT_SECRET:-picflow-production-secret}
+      - UPLOAD_DIR=/app/uploads
+      - DB_PATH=/app/data/picflow.db
+    volumes:
+      - ./uploads:/app/uploads
+      - ./data:/app/data
+    restart: unless-stopped
