@@ -11,10 +11,13 @@ let db;
 function saveDb() {
   try {
     const data = db.export();
-    const buf = Buffer.from(data);
-    fs.writeFileSync(DB_PATH, buf);
+    // 直接写入 Uint8Array，避免 Buffer.from() 序列化问题
+    const tmpPath = DB_PATH + '.tmp';
+    fs.writeFileSync(tmpPath, data);
+    fs.renameSync(tmpPath, DB_PATH);
+    console.log(`[db] saved to ${DB_PATH} (${data.length} bytes)`);
   } catch (e) {
-    console.error('Failed to save database:', e.message);
+    console.error('[db] Failed to save database:', e.message);
   }
 }
 
