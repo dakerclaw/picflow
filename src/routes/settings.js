@@ -16,21 +16,25 @@ router.get('/', (_req, res) => {
 router.put('/', authRequired, (req, res) => {
   if (!req.user.is_admin) return res.status(403).json({ error: '需要管理员权限' });
 
-  const { settings } = req.body;
-  if (!settings || typeof settings !== 'object') {
+  const { settings: data } = req.body;
+  if (!data || typeof data !== 'object') {
     return res.status(400).json({ error: 'invalid settings data' });
   }
 
-  const update = db.prepare('UPDATE settings SET value = ? WHERE key = ?');
-  const updateMany = db.transaction((data) => {
-    for (const [key, value] of Object.entries(data)) {
-      update.run(String(value), key);
-    }
-  });
-  updateMany(settings);
+  // 逐条更新，不使用 transaction 避免 sql.js 潜在问题
+  for (const [key, value] of Object.entries(data)) {
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(String(value), key);
+  }
 
+  // 持久化到磁盘
   db.save();
-  res.json({ ok: true });
+
+  // 直接从内存读取最新值返回给前端，无需额外 GET 请求
+  const rows = db.prepare('SELECT key, value FROM settings').all();
+  const result = {};
+  for (const r of rows) result[r.key] = r.value;
+
+  res.json({ ok: true, settings: result });
 });
 
 export default router;
