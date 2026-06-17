@@ -6,6 +6,18 @@ const router = Router();
 
 // 获取所有设置（公开）
 router.get('/', (_req, res) => {
+  // 优先从 settings.json 读取（最可靠的持久化来源）
+  const fromJson = db.loadSettingsJson();
+  if (fromJson && typeof fromJson === 'object' && Object.keys(fromJson).length > 0) {
+    // 同步到内存数据库，确保内存和磁盘一致
+    const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    for (const [k, v] of Object.entries(fromJson)) {
+      upsert.run(k, String(v));
+    }
+    return res.json({ settings: fromJson });
+  }
+
+  // 回退：从 SQLite 内存数据库读取
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = {};
   for (const r of rows) settings[r.key] = r.value;
