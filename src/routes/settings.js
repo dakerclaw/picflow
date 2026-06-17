@@ -26,8 +26,9 @@ router.put('/', authRequired, (req, res) => {
     db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(String(value), key);
   }
 
-  // 持久化到磁盘
+  // 持久化到磁盘（双重保险：sql.js + settings.json）
   db.save();
+  db.saveSettingsJson(result);
 
   // 直接从内存读取最新值返回给前端，无需额外 GET 请求
   const rows = db.prepare('SELECT key, value FROM settings').all();

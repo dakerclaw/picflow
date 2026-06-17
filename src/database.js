@@ -11,14 +11,36 @@ let db;
 function saveDb() {
   try {
     const data = db.export();
-    // 直接写入 Uint8Array，避免 Buffer.from() 序列化问题
-    const tmpPath = DB_PATH + '.tmp';
-    fs.writeFileSync(tmpPath, data);
-    fs.renameSync(tmpPath, DB_PATH);
-    console.log(`[db] saved to ${DB_PATH} (${data.length} bytes)`);
+    fs.writeFileSync(DB_PATH, data);
+    const stat = fs.statSync(DB_PATH);
+    console.log(`[db] saved ${DB_PATH} (${stat.size} bytes)`);
   } catch (e) {
     console.error('[db] Failed to save database:', e.message);
   }
+}
+
+// 设置 JSON 文件路径（独立于 sql.js，保证设置 100% 持久化）
+const SETTINGS_JSON_PATH = process.env.SETTINGS_JSON_PATH || path.join(__dirname, '..', 'settings.json');
+
+function saveSettingsJson(settingsObj) {
+  try {
+    fs.writeFileSync(SETTINGS_JSON_PATH, JSON.stringify(settingsObj, null, 2), 'utf-8');
+    console.log(`[db] settings.json saved (${Object.keys(settingsObj).length} keys)`);
+  } catch (e) {
+    console.error('[db] Failed to save settings.json:', e.message);
+  }
+}
+
+function loadSettingsJson() {
+  try {
+    if (fs.existsSync(SETTINGS_JSON_PATH)) {
+      const raw = fs.readFileSync(SETTINGS_JSON_PATH, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error('[db] Failed to load settings.json:', e.message);
+  }
+  return null;
 }
 
 function rowToObj(columns, row) {
@@ -159,6 +181,16 @@ async function openDatabase() {
     insertSetting.run(k, v);
   }
 
+  // 从 settings.json 恢复设置（双重保险：即使 sql.js 数据库损坏也能恢复）
+  const jsonSettings = loadSettingsJson();
+  if (jsonSettings && typeof jsonSettings === 'object') {
+    const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    for (const [k, v] of Object.entries(jsonSettings)) {
+      upsert.run(k, String(v));
+    }
+    console.log(`[db] Restored ${Object.keys(jsonSettings).length} settings from settings.json`);
+  }
+
   db.run(`CREATE TABLE IF NOT EXISTS photos (
     id TEXT PRIMARY KEY,
     filename TEXT NOT NULL,
@@ -193,6 +225,15 @@ async function openDatabase() {
 
   saveDb();
 
+  // 启动诊断：打印当前设置
+  try {
+    const rows = db.prepare('SELECT key, value FROM settings').all();
+    const current = {};
+    for (const r of rows) current[r.key] = r.value;
+    console.log(`[db] DB_PATH = ${DB_PATH}`);
+    console.log(`[db] Current settings:`, JSON.stringify(current));
+  } catch (e) { /* ignore */ }
+
   return {
     prepare: (sql) => new Statement(db, sql),
     exec: (sql) => db.run(sql),
@@ -210,6 +251,8 @@ async function openDatabase() {
     },
     close: () => { saveDb(); db.close(); },
     save: saveDb,
+    saveSettingsJson,
+    loadSettingsJson,
   };
 }
 
