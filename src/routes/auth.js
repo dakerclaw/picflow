@@ -45,6 +45,9 @@ router.post('/login', (req, res) => {
   if (!user) {
     return res.status(401).json({ error: '用户名不存在' });
   }
+  if (user.is_banned) {
+    return res.status(403).json({ error: '该账号已被封禁，请联系管理员' });
+  }
 
   const token = generateToken(user);
   res.json({

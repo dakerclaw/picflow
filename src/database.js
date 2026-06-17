@@ -118,7 +118,7 @@ async function openDatabase() {
     console.log('Migration check skipped:', e.message);
   }
 
-  // 检测并添加 is_admin 列
+  // 检测并添加 is_admin / is_banned 列
   try {
     const colInfo = db.exec("PRAGMA table_info(users)");
     if (colInfo.length > 0) {
@@ -128,9 +128,14 @@ async function openDatabase() {
         db.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0');
         console.log('Added is_admin column to users table.');
       }
+      const hasIsBanned = cols.some(r => r[1] === 'is_banned');
+      if (!hasIsBanned) {
+        db.run('ALTER TABLE users ADD COLUMN is_banned INTEGER DEFAULT 0');
+        console.log('Added is_banned column to users table.');
+      }
     }
   } catch (e) {
-    console.log('is_admin migration check skipped:', e.message);
+    console.log('is_admin/is_banned migration check skipped:', e.message);
   }
 
   // 设置表
