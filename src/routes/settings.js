@@ -4,13 +4,29 @@ import { authRequired } from '../middleware/auth.js';
 
 const router = Router();
 
+// 默认设置值（运行时兜底，也用于空表恢复）
+const DEFAULT_SETTINGS = {
+  site_name: 'PicFlow',
+  site_title: 'PicFlow - 图片分享',
+  site_icon: '',
+  footer_copyright: `© ${new Date().getFullYear()} PicFlow`,
+};
+
 // 获取所有设置（公开）
-// 始终以 SQLite 内存数据库为准（在 Docker 中 picflow.db 在挂载卷上，可靠持久化）
-// settings.json 仅在启动时用于恢复，运行时不再从中读取
 router.get('/', (_req, res) => {
   const rows = db.prepare('SELECT key, value FROM settings').all();
-  const settings = {};
+  const settings = { ...DEFAULT_SETTINGS };  // 兜底默认值
   for (const r of rows) settings[r.key] = r.value;
+
+  // 如果数据库是空的，初始化进去
+  if (rows.length === 0) {
+    console.warn('[settings] settings 表为空，正在初始化默认值...');
+    const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
+      upsert.run(k, v);
+    }
+    db.save();
+  }
 
   // 禁止浏览器/代理缓存，确保刷新后一定拿到最新值
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -27,20 +43,22 @@ router.put('/', authRequired, (req, res) => {
     return res.status(400).json({ error: 'invalid settings data' });
   }
 
-  // 逐条更新，不使用 transaction 避免 sql.js 潜在问题
+  // 用 INSERT OR REPLACE 代替 UPDATE，表为空时也能插入
+  const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(data)) {
-    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(String(value), key);
+    upsert.run(key, String(value));
   }
 
-  // 直接从内存读取最新值
+  // 读回最新值
   const rows = db.prepare('SELECT key, value FROM settings').all();
-  const result = {};
+  const result = { ...DEFAULT_SETTINGS };
   for (const r of rows) result[r.key] = r.value;
 
-  // 持久化到磁盘（双重保险：sql.js + settings.json）
+  // 持久化到磁盘
   db.save();
   db.saveSettingsJson(result);
 
+  console.log(`[settings] PUT saved:`, JSON.stringify(result));
   res.json({ ok: true, settings: result });
 });
 
