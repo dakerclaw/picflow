@@ -156,22 +156,6 @@ cd ..
 rm -rf picflow
 ```
 
-## 📦 手动部署
-
-```bash
-# 安装依赖
-npm install
-
-# 配置环境变量
-cp .env.example .env
-# 编辑 .env 修改 JWT_SECRET
-
-# 创建必要目录
-mkdir -p uploads
-
-# 启动服务
-npm start
-```
 
 ## 🔧 环境变量
 
@@ -206,28 +190,7 @@ npm start
 | POST | `/api/photos/:id/download` | 记录下载 | - |
 | DELETE | `/api/photos/:id` | 删除图片 | ✅ |
 
-### 示例
 
-```bash
-# 注册
-curl -X POST http://localhost:3000/api/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"demo","email":"demo@pic.com","password":"123456"}'
-
-# 登录
-curl -X POST http://localhost:3000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"demo@pic.com","password":"123456"}'
-
-# 上传图片
-curl -X POST http://localhost:3000/api/photos \
-  -H "Authorization: Bearer <token>" \
-  -F "files=@photo1.jpg" \
-  -F "files=@photo2.png"
-
-# 获取图片列表
-curl http://localhost:3000/api/photos?search=风景&page=1&limit=20
-```
 
 ## 🖥 使用指南
 
