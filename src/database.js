@@ -11,16 +11,26 @@ let db;
 function saveDb() {
   try {
     const data = db.export();
-    fs.writeFileSync(DB_PATH, data);
+    // 使用 Buffer.from() 显式复制 ArrayBuffer，确保 writeFileSync 拿到独立副本
+    const buf = Buffer.from(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+    fs.writeFileSync(DB_PATH, buf);
+    // 验证写入：如果文件大小为 0 说明写入失败
     const stat = fs.statSync(DB_PATH);
-    console.log(`[db] saved ${DB_PATH} (${stat.size} bytes)`);
+    if (stat.size === 0) {
+      console.error(`[db] WARNING: ${DB_PATH} was written but is 0 bytes! Retrying...`);
+      fs.writeFileSync(DB_PATH, buf);
+      const stat2 = fs.statSync(DB_PATH);
+      console.log(`[db] retry: ${DB_PATH} (${stat2.size} bytes)`);
+    } else {
+      console.log(`[db] saved ${DB_PATH} (${stat.size} bytes)`);
+    }
   } catch (e) {
     console.error('[db] Failed to save database:', e.message);
   }
 }
 
-// 设置 JSON 文件路径（独立于 sql.js，保证设置 100% 持久化）
-const SETTINGS_JSON_PATH = process.env.SETTINGS_JSON_PATH || path.join(__dirname, '..', 'settings.json');
+// 设置 JSON 文件路径 —— 强制放在数据库同一目录（Docker 中即 /app/data/，在挂载卷上持久化）
+const SETTINGS_JSON_PATH = process.env.SETTINGS_JSON_PATH || path.join(path.dirname(DB_PATH), 'settings.json');
 
 function saveSettingsJson(settingsObj) {
   try {
@@ -225,12 +235,13 @@ async function openDatabase() {
 
   saveDb();
 
-  // 启动诊断：打印当前设置
+  // 启动诊断：打印当前设置和关键路径
   try {
     const rows = db.prepare('SELECT key, value FROM settings').all();
     const current = {};
     for (const r of rows) current[r.key] = r.value;
-    console.log(`[db] DB_PATH = ${DB_PATH}`);
+    console.log(`[db] DB_PATH    = ${DB_PATH}`);
+    console.log(`[db] SETTINGS   = ${SETTINGS_JSON_PATH}`);
     console.log(`[db] Current settings:`, JSON.stringify(current));
   } catch (e) { /* ignore */ }
 

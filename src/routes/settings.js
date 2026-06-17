@@ -5,22 +5,16 @@ import { authRequired } from '../middleware/auth.js';
 const router = Router();
 
 // 获取所有设置（公开）
+// 始终以 SQLite 内存数据库为准（在 Docker 中 picflow.db 在挂载卷上，可靠持久化）
+// settings.json 仅在启动时用于恢复，运行时不再从中读取
 router.get('/', (_req, res) => {
-  // 优先从 settings.json 读取（最可靠的持久化来源）
-  const fromJson = db.loadSettingsJson();
-  if (fromJson && typeof fromJson === 'object' && Object.keys(fromJson).length > 0) {
-    // 同步到内存数据库，确保内存和磁盘一致
-    const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
-    for (const [k, v] of Object.entries(fromJson)) {
-      upsert.run(k, String(v));
-    }
-    return res.json({ settings: fromJson });
-  }
-
-  // 回退：从 SQLite 内存数据库读取
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = {};
   for (const r of rows) settings[r.key] = r.value;
+
+  // 禁止浏览器/代理缓存，确保刷新后一定拿到最新值
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
   res.json({ settings });
 });
 
