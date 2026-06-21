@@ -166,7 +166,7 @@ router.get('/:id', authOptional, (req, res) => {
   res.json({ photo });
 });
 
-router.post('/', authRequired, upload.array('files', 20), (req, res) => {
+router.post('/', authRequired, upload.array('files'), (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: '请选择图片文件' });
   }
