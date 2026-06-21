@@ -179,26 +179,35 @@ async function openDatabase() {
     value TEXT NOT NULL
   )`);
 
-  // 插入默认设置
+  // 插入默认设置（使用安全函数确保 value 不为 NULL）
+  const year = new Date().getFullYear();
   const defaults = [
     ['site_name', 'PicFlow'],
     ['site_title', 'PicFlow - 图片分享'],
     ['site_icon', ''],
-    ['footer_copyright', `© ${new Date().getFullYear()} PicFlow`],
+    ['footer_copyright', '(C) ' + year + ' PicFlow'],
   ];
+
+  // 安全插入：跳过 value 为 null/undefined 的条目
   const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [k, v] of defaults) {
-    insertSetting.run(k, v);
+    if (v != null) insertSetting.run(k, String(v));
   }
 
   // 从 settings.json 恢复设置（双重保险：即使 sql.js 数据库损坏也能恢复）
   const jsonSettings = loadSettingsJson();
-  if (jsonSettings && typeof jsonSettings === 'object') {
+  if (jsonSettings && typeof jsonSettings === 'object' && !Array.isArray(jsonSettings)) {
     const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    let restored = 0;
     for (const [k, v] of Object.entries(jsonSettings)) {
-      upsert.run(k, String(v));
+      if (v != null) {
+        upsert.run(k, String(v));
+        restored++;
+      } else {
+        console.log(`[db] Skipping setting "${k}" (value is ${v})`);
+      }
     }
-    console.log(`[db] Restored ${Object.keys(jsonSettings).length} settings from settings.json`);
+    if (restored > 0) console.log(`[db] Restored ${restored} settings from settings.json`);
   }
 
   db.run(`CREATE TABLE IF NOT EXISTS photos (
