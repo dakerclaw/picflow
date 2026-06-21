@@ -173,10 +173,35 @@ async function openDatabase() {
     console.log('is_admin/is_banned migration check skipped:', e.message);
   }
 
-  // 设置表
+  // 设置表 —— 先迁移旧表的 NOT NULL 约束（SQLite 不支持直接 DROP CONSTRAINT）
+  try {
+    const colInfo = db.exec("PRAGMA table_info(settings)");
+    if (colInfo.length > 0) {
+      const cols = colInfo[0].values;
+      const valueCol = cols.find(r => r[1] === 'value');
+      // r[3] === 1 表示 NOT NULL 约束存在
+      if (valueCol && valueCol[3] === 1) {
+        console.log('[db] Migrating settings table to remove NOT NULL constraint...');
+        db.run('BEGIN');
+        db.run(`CREATE TABLE settings_new (
+          key TEXT PRIMARY KEY,
+          value TEXT
+        )`);
+        db.run('INSERT INTO settings_new SELECT key, COALESCE(value, "") FROM settings');
+        db.run('DROP TABLE settings');
+        db.run('ALTER TABLE settings_new RENAME TO settings');
+        db.run('COMMIT');
+        console.log('[db] settings table migration complete.');
+      }
+    }
+  } catch (e) {
+    console.log('[db] settings migration check skipped:', e.message);
+  }
+
+  // 创建表（如果上面迁移没执行，这里正常创建；如果已迁移，IF NOT EXISTS 跳过）
   db.run(`CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
+    value TEXT
   )`);
 
   // 插入默认设置（使用安全函数确保 value 不为 NULL）
