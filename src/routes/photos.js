@@ -95,7 +95,7 @@ function withShareTokens(photos) {
 }
 
 router.get('/', authOptional, (req, res) => {
-  const { search, year, month, day, page = 1, limit = 50 } = req.query;
+  const { search, year, month, day, page = 1, limit = 20 } = req.query;
   const offset = (Math.max(1, +page) - 1) * Math.min(100, +limit);
   const sqlLimit = Math.min(100, +limit);
 

@@ -333,7 +333,7 @@ rm settings.json && pm2 restart picflow
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |------|------|------|------|
-| GET | `/api/photos` | 图片列表（`?search=&year=&month=&day=&page=&limit=`，默认 `page=1&limit=50`，`limit` 上限 100；返回 `total`/`totalPages`），每条记录带 `share_token` | - |
+| GET | `/api/photos` | 图片列表（`?search=&year=&month=&day=&page=&limit=`，默认 `page=1&limit=20`，`limit` 上限 100；返回 `total`/`totalPages`），每条记录带 `share_token` | - |
 | GET | `/api/photos/mine` | 我的图片，每条记录带 `share_token` | ✅ |
 | GET | `/api/photos/:id` | 图片详情，带 `share_token` | - |
 | POST | `/api/photos` | 上传图片（form-data `files`），返回的记录带 `share_token` | ✅ |
@@ -388,10 +388,10 @@ rm settings.json && pm2 restart picflow
 
 ### 📄 列表分页
 
-首页默认一次加载 **50 张**，网格下方出现「加载更多」按钮，点击即追加下一页；
+首页默认一次加载 **20 张**，网格下方出现「加载更多」按钮，点击即追加下一页；
 全部加载完后按钮自动消失（不会一直挂着一个无效按钮）。
 
-- 请求形如 `GET /api/photos?page=2&limit=50`，`limit` 上限 100
+- 请求形如 `GET /api/photos?page=2&limit=20`，`limit` 上限 100
 - 返回 `{ photos, total, page, totalPages }`，按钮显隐由 `page < totalPages` 决定
 - 追加时按 `id` **去重**，即使服务端排序抖动也不会出现重复卡片
 - 切换搜索词或年份/月份/日期筛选时，会**重置回第 1 页**（替换而非追加）
@@ -406,7 +406,7 @@ rm settings.json && pm2 restart picflow
 > （`columnCount` + `columnFill:"balance"`）。`balance` 会以**容器高度**为基准把内容
 > 均分到各列，新照片追加进同一个容器时，浏览器不会让容器变高，而是把新项填进较短的列，
 > 视觉上表现为「只在右侧一两列继续加」而不是向下生长。
-> 因此渲染时按 50 张一页切片，**每页各自成一个多列容器**（块块纵向排列），
+> 因此渲染时按 20 张一页切片，**每页各自成一个多列容器**（块块纵向排列），
 > 新页自然出现在旧页下方。切片的代价是点击索引会变成「页内下标」，
 > 所以传 `offset` 给网格组件，点击时补回全量下标，灯箱才不会打开成别的照片。
 
