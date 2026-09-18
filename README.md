@@ -333,7 +333,7 @@ rm settings.json && pm2 restart picflow
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |------|------|------|------|
-| GET | `/api/photos` | 图片列表（`?search=&page=&limit=`），每条记录带 `share_token` | - |
+| GET | `/api/photos` | 图片列表（`?search=&year=&month=&day=&page=&limit=`，默认 `page=1&limit=50`，`limit` 上限 100；返回 `total`/`totalPages`），每条记录带 `share_token` | - |
 | GET | `/api/photos/mine` | 我的图片，每条记录带 `share_token` | ✅ |
 | GET | `/api/photos/:id` | 图片详情，带 `share_token` | - |
 | POST | `/api/photos` | 上传图片（form-data `files`），返回的记录带 `share_token` | ✅ |
@@ -383,7 +383,23 @@ rm settings.json && pm2 restart picflow
 
 ### 深链（直接打开某张照片）
 - 在站内使用 `/?photo=<photoId>` 可让应用启动后**自动展开这张照片的灯箱**
-- 刷新后依然生效；若该照片不在当前筛选结果中，则不会强行打开（避免空白灯箱）
+- 刷新后依然生效；若该照片不在已加载的列表中，应用会**自动继续翻页**去把它找出来
+- 处于搜索/筛选状态时不强行展开（避免索引错位打开成别的照片）
+
+### 📄 列表分页
+
+首页默认一次加载 **50 张**，网格下方出现「加载更多」按钮，点击即追加下一页；
+全部加载完后按钮自动消失（不会一直挂着一个无效按钮）。
+
+- 请求形如 `GET /api/photos?page=2&limit=50`，`limit` 上限 100
+- 返回 `{ photos, total, page, totalPages }`，按钮显隐由 `page < totalPages` 决定
+- 追加时按 `id` **去重**，即使服务端排序抖动也不会出现重复卡片
+- 切换搜索词或年份/月份/日期筛选时，会**重置回第 1 页**（替换而非追加）
+
+> **为什么服务端排序要带 `id` 兜底**：`created_at` 只精确到秒（`datetime('now')`），
+> 批量上传会在同一秒写入几十行。只按 `created_at DESC` 排序时，同秒行的顺序在
+> SQLite 里没有定义，翻页边界可能漂移，导致**某些照片重复出现、另一些永远看不到**。
+> 排序键因此写成 `ORDER BY created_at DESC, id DESC`，让全序稳定。
 
 ## 🛠 本地开发
 

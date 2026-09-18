@@ -140,7 +140,7 @@ router.get('/', authOptional, (req, res) => {
     JOIN users u ON p.uploader_id = u.id
     ${photoLikeJoin}
     ${where}
-    ORDER BY p.created_at DESC
+    ORDER BY p.created_at DESC, p.id DESC
     LIMIT ? OFFSET ?
   `).all(...params, sqlLimit, offset);
 
@@ -158,7 +158,7 @@ router.get('/mine', authRequired, (req, res) => {
     FROM photos p
     JOIN users u ON p.uploader_id = u.id
     WHERE p.uploader_id = ?
-    ORDER BY p.created_at DESC
+    ORDER BY p.created_at DESC, p.id DESC
   `).all(req.user.id);
 
   const likesSub = db.prepare('SELECT photo_id FROM likes WHERE user_id = ?').all(req.user.id);
