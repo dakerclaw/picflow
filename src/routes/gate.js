@@ -69,6 +69,45 @@ export function isGateEnabled() {
 /** Cookie 名：解锁后由服务端种下，浏览器自动携带，用于 <script>/<link> 这类请求 */
 export const GATE_COOKIE = 'picflow_site_token';
 
+/**
+ * 分享令牌：只授权「看某一??张照片」，不等于站点通行证。
+ *
+ * 为什么需要独立令牌：在开启整站密码的前提下，分享出去的单张图片链接
+ * 若要求对方先输站点密码，等于把密码告诉了所有人 —— 分享功能就废了。
+ * 正确做法是让分享链接自带一个「只能看这一张」的窄令牌：
+ * scope=share 且绑定 photoId，服务端只对那一张照片的详情接口与图片文件放行。
+ */
+export const SHARE_SCOPE = 'share';
+
+/** 签发分享令牌（不设过期：照片链接长期有效，与常见图床行为一致） */
+export function signShareToken(photoId) {
+  return jwt.sign({ scope: SHARE_SCOPE, photoId: String(photoId) }, JWT_SECRET, { expiresIn: '3650d' });
+}
+
+/** 取出请求里的分享令牌（查询参数 share_token 或请求头 X-Share-Token） */
+function shareTokenFromRequest(req) {
+  return req.query.share_token || req.headers['x-share-token'] || '';
+}
+
+/**
+ * 校验分享令牌，并确认它授权的就是这个 photoId。
+ * 返回 true 才算放行 —— 不比对 photoId 的话，拿 A 的分享令牌就能看 B。
+ */
+export function isShareTokenValidFor(token, photoId) {
+  if (!token || typeof token !== 'string') return false;
+  try {
+    const d = jwt.verify(token, JWT_SECRET);
+    return !!d && d.scope === SHARE_SCOPE && String(d.photoId) === String(photoId);
+  } catch {
+    return false;
+  }
+}
+
+/** 该请求是否携带了「能看某个照片」的分享令牌 */
+export function hasShareTokenFor(req, photoId) {
+  return isShareTokenValidFor(shareTokenFromRequest(req), photoId);
+}
+
 /** 校验请求携带的访问令牌是否有效 */
 function verifyGateToken(req) {
   const header = req.headers['x-site-token'] || req.query.site_token;
@@ -197,14 +236,55 @@ function isAdminToken(req) {
   }
 }
 
-/** /uploads 静态资源的守卫（支持 <img> 标签，失败时返回 1x1 透明图） */
+/**
+ * /uploads 静态资源的守卫（支持 <img> 标签，失败时返回 1x1 透明图）。
+ *
+ * 额外放行一种情况：请求带 `?share_token=`，且该令牌授权的照片文件名
+ * 正是被请求的这个文件。这样分享页里的 <img> 才加载得出来。
+ * 必须比对文件名 —— 否则拿 A 的分享令牌就能把整个 uploads 目录刷一遍。
+ */
 export function gateGuardUploads(req, res, next) {
   if (!isGateEnabled()) return next();
   if (verifyGateTokenAny(req)) return next();
+  if (shareTokenCoversFile(req, req.path)) return next();
 
   res.set('Cache-Control', 'no-store');
   res.set('Content-Type', 'image/svg+xml');
   return res.status(401).send('<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>');
+}
+
+/**
+ * 判断请求携带的 share_token 是否覆盖了 `filePath`（/uploads 内的相对路径）。
+ * 通过「令牌里绑定的 photoId → 该照片的 filename」反查，避免遍历放行。
+ */
+function shareTokenCoversFile(req, filePath) {
+  const token = shareTokenFromRequest(req);
+  if (!token) return false;
+  let photoId;
+  try {
+    const d = jwt.verify(token, JWT_SECRET);
+    if (!d || d.scope !== SHARE_SCOPE) return false;
+    photoId = d.photoId;
+  } catch {
+    return false;
+  }
+  if (!photoId) return false;
+
+  let name;
+  try {
+    name = decodeURIComponent(String(filePath).replace(/^\/+/, ''));
+  } catch {
+    return false;
+  }
+  // 只允许单层文件名，挡掉 ../ 之类的穿越尝试
+  if (!name || name.includes('/') || name.includes('\\')) return false;
+
+  try {
+    const row = db.prepare('SELECT filename FROM photos WHERE id = ?').get(String(photoId));
+    return !!row && String(row.filename) === name;
+  } catch {
+    return false;
+  }
 }
 
 /** 对外暴露的公开信息（不含密码本身） */

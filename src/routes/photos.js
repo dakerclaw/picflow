@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import db from '../database.js';
 import { authRequired, authOptional } from '../middleware/auth.js';
+import { signShareToken } from './gate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', '..', 'uploads');
@@ -78,6 +79,21 @@ function getImageDimensions(filepath) {
 
 const router = Router();
 
+/**
+ * 给照片补上 share_token。
+ *
+ * 为什么由服务端下发而不是前端自己拼：分享令牌必须由掌握 JWT 密钥的服务端签发，
+ * 前端只能拿到「结果」。前端拿不到令牌，整站加密时分享链接就点不开。
+ */
+function withShareToken(photo) {
+  if (!photo) return photo;
+  return { ...photo, share_token: signShareToken(photo.id) };
+}
+
+function withShareTokens(photos) {
+  return (photos || []).map(withShareToken);
+}
+
 router.get('/', authOptional, (req, res) => {
   const { search, year, month, day, page = 1, limit = 50 } = req.query;
   const offset = (Math.max(1, +page) - 1) * Math.min(100, +limit);
@@ -129,7 +145,7 @@ router.get('/', authOptional, (req, res) => {
   `).all(...params, sqlLimit, offset);
 
   res.json({
-    photos,
+    photos: withShareTokens(photos),
     total: count.total,
     page: +page,
     totalPages: Math.ceil(count.total / sqlLimit),
@@ -149,7 +165,7 @@ router.get('/mine', authRequired, (req, res) => {
   const likedIds = new Set(likesSub.map(l => l.photo_id));
 
   const result = photos.map(p => ({ ...p, is_liked: likedIds.has(p.id) ? 1 : 0 }));
-  res.json({ photos: result });
+  res.json({ photos: withShareTokens(result) });
 });
 
 router.get('/:id', authOptional, (req, res) => {
@@ -163,7 +179,7 @@ router.get('/:id', authOptional, (req, res) => {
   `).get(req.params.id);
 
   if (!photo) return res.status(404).json({ error: '图片不存在' });
-  res.json({ photo });
+  res.json({ photo: withShareToken(photo) });
 });
 
 router.post('/', authRequired, upload.array('files'), (req, res) => {
@@ -200,7 +216,7 @@ router.post('/', authRequired, upload.array('files'), (req, res) => {
   });
 
   insertMany(req.files);
-  res.status(201).json({ photos });
+  res.status(201).json({ photos: withShareTokens(photos) });
 });
 
 router.post('/:id/like', authRequired, (req, res) => {

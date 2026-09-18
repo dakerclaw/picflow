@@ -210,7 +210,7 @@ curl -X PUT http://localhost:3000/api/admin/site-password \
 | 项目 | 说明 |
 |------|------|
 | **保护范围** | 前端页面、全部 API、`/uploads` 图片文件、前端 JS/CSS 构建产物，一律拦截 |
-| **放行内容** | 仅密码页本身及其样式 `gate.css`；以及**已解锁访客**（Cookie / 令牌）携带的构建产物请求 |
+| **放行内容** | 仅密码页本身及其样式 `gate.css`、**分享页 `/share/*`**；以及**已解锁访客**（Cookie / 令牌）携带的构建产物请求、**分享令牌**授权的那一张图片文件 |
 | **有效期** | 令牌存于 `sessionStorage` **与** `picflow_site_token` 会话 Cookie，**关闭浏览器即失效**，需重新输入 |
 | **令牌时效** | 服务端签发时默认 12 小时，可在后台调整（`sessionHours`） |
 | **防爆破** | 同一 IP 10 分钟内连续输错 10 次，锁定 10 分钟 |
@@ -245,6 +245,29 @@ curl -X PUT http://localhost:3000/api/admin/site-password \
 >
 > `hint` 留空表示密码页不显示提示语。默认值 `请输入访问密码` 会被视作「未设置」。
 
+### 🔗 分享链接与整站密码（重要）
+
+开启整站密码后，**分享出去的单张照片链接依然可以免密访问**，不会被密码页拦住。
+
+原理是分享链接自带一个**只授权这一张照片**的窄令牌，与站点通行证完全隔离：
+
+| 项 | 说明 |
+|------|------|
+| **链接形态** | `/share/<photoId>?t=<shareToken>` |
+| **令牌作用域** | `scope=share` 且绑定 `photoId`，**只能看这一张**，不能当站点通行证用 |
+| **令牌来源** | 服务端签发，随 `/api/photos`、`/api/photos/mine`、`/api/photos/:id` 的每条记录以 `share_token` 字段下发 |
+| **有效期** | 3650 天（长期有效，与常见图床行为一致）；删除照片后链接立即失效（404） |
+| **渲染方式** | 服务端渲染的独立页面 `dist/share.html`，**不加载 SPA bundle**，也不开放任何站内 API |
+| **图片放行** | `/uploads/<file>` 仅在携带的 `share_token` 所绑定的照片文件名**正好等于**被请求文件名时放行 |
+
+> **为什么不用 SPA 承载分享页**：整站加密时把未解锁访客放进 SPA，等于让 bundle 直接去请求
+> `/api/photos` 等受保护接口，结果必然是一片空白或 401。所以分享页由服务端一次性渲染好，
+> 只暴露这一张照片，其余内容一律不碰。
+
+> **为什么分享令牌不能当通行证**：如果分享链接里塞的是站点令牌，那么任何收到链接的人
+> 都能借此浏览整站 —— 分享功能就等价于把密码告诉了所有人。因此 `isShareTokenValidFor`
+> 会同时校验 `scope === 'share'` 与 `photoId` 完全相等，两者缺一不可。
+
 ### ⚠️ 忘记密码怎么办
 
 密码以 bcrypt 哈希存储，无法找回，只能重置。任选一种：
@@ -275,6 +298,26 @@ rm settings.json && pm2 restart picflow
    必须改成 `/assets/...`。
 4. 反向代理（Nginx）注意放行 `Set-Cookie` 与 `Cookie` 头，不要做 `proxy_cookie_path` 之类的改写。
 
+### ⚠️ 开启密码后，分享出去的照片打不开
+
+分享功能与整站密码是**两套独立机制**，用这套顺序定位：
+
+1. **链接里 `?t=` 后面是不是空的？**
+   若形如 `/share/<id>?t=`，说明前端没拿到 `share_token`。
+   先确认接口返回里有没有这个字段：`curl -H "Authorization: Bearer <token>" /api/photos`。
+   没有 → 后端没签发（检查 `routes/photos.js` 的 `withShareToken` 是否接到了所有读取分支，
+   包括**上传接口的返回**）；有字段但前端是空 → 前端把字段洗掉了
+   （`co()` 这类 view-model 转换必须显式保留 `shareToken`）。
+2. **打开链接看到「链接无效或已失效」？**
+   说明令牌验签失败或与 `photoId` 不匹配。检查 `JWT_SECRET` 是否在两次部署间变过
+   （变了会导致**已发出的所有旧链接一起失效**），以及链接里的 id 是否就是令牌绑定的那张。
+3. **照片区域空白，但页面框架正常？**
+   说明 HTML 出来了、`<img>` 被挡了。检查 `gateGuardUploads` 里 `shareTokenCoversFile`
+   是否真的比对上了文件名（它拿令牌里的 `photoId` 反查 `photos.filename`）。
+4. **接收者被丢回密码页？**
+   说明 `/share` 的豁免中间件没生效。它必须挂在**所有闸门之前**，并且顺手打上
+   `req.__gatePassed = true` —— 只 `next()` 是不够的，后面的守卫仍会拦住。
+
 ## 📡 API 文档
 
 ### 认证
@@ -290,13 +333,22 @@ rm settings.json && pm2 restart picflow
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |------|------|------|------|
-| GET | `/api/photos` | 图片列表（`?search=&page=&limit=`） | - |
-| GET | `/api/photos/mine` | 我的图片 | ✅ |
-| GET | `/api/photos/:id` | 图片详情 | - |
-| POST | `/api/photos` | 上传图片（form-data `files`） | ✅ |
+| GET | `/api/photos` | 图片列表（`?search=&page=&limit=`），每条记录带 `share_token` | - |
+| GET | `/api/photos/mine` | 我的图片，每条记录带 `share_token` | ✅ |
+| GET | `/api/photos/:id` | 图片详情，带 `share_token` | - |
+| POST | `/api/photos` | 上传图片（form-data `files`），返回的记录带 `share_token` | ✅ |
 | POST | `/api/photos/:id/like` | 点赞/取消点赞 | ✅ |
 | POST | `/api/photos/:id/download` | 记录下载 | - |
-| DELETE | `/api/photos/:id` | 删除图片 | ✅ |
+| DELETE | `/api/photos/:id` | 删除图片（分享链接随之失效） | ✅ |
+
+### 分享页
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|------|------|------|------|
+| GET | `/share/:id?t=<shareToken>` | 服务端渲染的单张照片分享页 | 分享令牌 |
+
+> 分享令牌无效 / 不匹配该照片 → `403`（「链接无效」页）；照片已被删除 → `404`（「照片不存在」页）。
+> 分享页自身带 `no-store`，不加载 SPA bundle，也不会把站点令牌写进页面。
 
 
 
@@ -324,8 +376,14 @@ rm settings.json && pm2 restart picflow
 - 退出：个人主页 → 退出登录
 
 ### 分享
-- 点击图片卡片上的分享图标
-- 复制链接或一键分享到微博/Twitter
+- 点开照片 → 点击灯箱里的「分享」按钮
+- 弹窗里可复制链接、或一键分享到微信/微博/Twitter
+- 链接形如 `/share/<photoId>?t=<shareToken>`，**接收者无需输入站点密码即可查看这一张**
+- 对方只能看到这一张照片，站内其余内容仍需密码
+
+### 深链（直接打开某张照片）
+- 在站内使用 `/?photo=<photoId>` 可让应用启动后**自动展开这张照片的灯箱**
+- 刷新后依然生效；若该照片不在当前筛选结果中，则不会强行打开（避免空白灯箱）
 
 ## 🛠 本地开发
 

@@ -17,6 +17,7 @@ import gateRoutes, {
   isGateTokenValid,
   gatePublicInfo,
   tokenFromRequest,
+  isShareTokenValidFor,
 } from './routes/gate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -24,10 +25,22 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 const DIST_DIR = path.join(__dirname, '..', 'dist');
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 
 app.disable('etag');
 app.use(cors({ exposedHeaders: ['X-Site-Required'] }));
 app.use(express.json());
+
+/**
+ * 分享链接豁免：`/share/<photoId>?t=<shareToken>` 这类请求即便在整站加密状态下也放行。
+ *
+ * 放在所有闸门之前，并打上 req.__gatePassed，让后面的守卫跳过。
+ * 注意只豁免「分享页本身」，照片数据仍由分享页服务端渲染，不额外开放 API。
+ */
+app.use('/share', (req, res, next) => {
+  req.__gatePassed = true;
+  next();
+});
 
 // ---------------------------------------------------------------------------
 // 全局访问密码闸门
@@ -104,6 +117,38 @@ app.get('/gate.css', (_req, res) => {
   res.type('text/css').sendFile(file);
 });
 
+// ---------------------------------------------------------------------------
+// 单张照片分享页（服务端渲染）
+//
+// 为什么独立成页而不是复用 SPA：整站加密时，把未解锁访客放进 SPA 就等于
+// 让 bundle 直接去请求 /api/photos 等受保护接口，必然一片空白/401。
+// 这里由服务端一次性渲染好这一张照片，只暴露它自己，不放行任何站内 API。
+// ---------------------------------------------------------------------------
+app.get('/share/:id', (req, res) => {
+  const { id } = req.params;
+  const token = req.query.t || '';
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.type('html');
+
+  // 令牌必须有效且**正好对应该照片**，否则不给看
+  if (!isShareTokenValidFor(token, id)) {
+    return res.status(403).send(renderShareDenied());
+  }
+
+  let photo = null;
+  try {
+    photo = db.prepare(`
+      SELECT p.*, u.username as uploader_name
+      FROM photos p JOIN users u ON p.uploader_id = u.id
+      WHERE p.id = ?
+    `).get(id);
+  } catch { /* ignore */ }
+
+  if (!photo) return res.status(404).send(renderShareMissing());
+
+  res.send(renderShareHtml(photo, token));
+});
+
 app.use(gateGuardAssets);
 
 app.use(express.static(DIST_DIR, { index: false }));
@@ -137,6 +182,66 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   }[c]));
+}
+
+/** 分享页里那张图的 URL（带 share_token，绕过 /uploads 闸门） */
+function shareImageUrl(photo, token) {
+  return `/uploads/${encodeURIComponent(photo.filename)}?share_token=${encodeURIComponent(token)}`;
+}
+
+/** 渲染分享页 */
+function renderShareHtml(photo, token) {
+  let html;
+  try {
+    html = fs.readFileSync(path.join(DIST_DIR, 'share.html'), 'utf-8');
+  } catch {
+    return '<!doctype html><meta charset="utf-8"><h1>分享页缺失</h1>';
+  }
+
+  const title = photo.title || '未命名图片';
+  const desc = photo.description || '';
+  const imgUrl = shareImageUrl(photo, token);
+  const stage = photo.mime_type && String(photo.mime_type).startsWith('image/')
+    ? `<div class="share__stage"><img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(title)}" /></div>`
+    : '<div class="share__stage share__stage--missing">该文件不是可预览的图片格式</div>';
+
+  return html
+    .replace(/__SITE_NAME__/g, () => escapeHtml(getSiteName()))
+    .replace(/__SHARE_TITLE__/g, () => escapeHtml(title))
+    .replace(/__SHARE_DESC__/g, () => escapeHtml(desc).replace(/\s+/g, ' '))
+    .replace(/__SHARE_DESC_BLOCK__/g, () => (desc
+      ? `<p class="share__desc">${escapeHtml(desc)}</p>` : ''))
+    .replace(/__SHARE_UPLOADER__/g, () => escapeHtml(photo.uploader_name || '匿名'))
+    .replace(/__SHARE_IMAGE__/g, () => escapeHtml(imgUrl))
+    .replace(/__SHARE_DOWNLOAD__/g, () => escapeHtml(imgUrl))
+    .replace(/__SHARE_YEAR__/g, () => String(new Date().getFullYear()))
+    .replace(/__SHARE_STAGE__/g, () => stage);
+}
+
+/** 分享令牌无效 / 未携带 */
+function renderShareDenied() {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>链接无效</title><link rel="stylesheet" href="/gate.css"></head>
+<body><main class="gate" role="main"><section class="gate__card">
+<header class="gate__hero"><span class="gate__brand">${escapeHtml(getSiteName())}</span>
+<span class="gate__tag">已加密</span></header>
+<div class="gate__body"><h1 class="gate__title">这个分享链接无效或已失效</h1>
+<p class="gate__hint">请向分享者索要新的链接。</p></div></section></main></body></html>`;
+}
+
+/** 照片已被删除 */
+function renderShareMissing() {
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>照片不存在</title><link rel="stylesheet" href="/gate.css"></head>
+<body><main class="gate" role="main"><section class="gate__card">
+<header class="gate__hero"><span class="gate__brand">${escapeHtml(getSiteName())}</span>
+<span class="gate__tag">已加密</span></header>
+<div class="gate__body"><h1 class="gate__title">这张照片已被删除或不存在</h1>
+<p class="gate__hint">如果这是别人分享给你的链接，可能对方已经撤回了它。</p></div></section></main></body></html>`;
 }
 
 function getSiteName() {

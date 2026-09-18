@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>__SHARE_TITLE__ · __SITE_NAME__</title>
+    <meta name="description" content="__SHARE_DESC__" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="__SHARE_TITLE__" />
+    <meta property="og:description" content="__SHARE_DESC__" />
+    <meta property="og:image" content="__SHARE_IMAGE__" />
+    <link rel="stylesheet" href="/gate.css" />
+    <style>
+      body { margin: 0; }
+      .share { min-height: 100vh; background: #f9fafb; padding: 24px 16px 40px; box-sizing: border-box; }
+      .share__wrap { max-width: 900px; margin: 0 auto; }
+      .share__head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+      .share__mark {
+        width: 30px; height: 30px; border-radius: 8px; background: #e6f1fb; color: #378add;
+        display: flex; align-items: center; justify-content: center; flex: none;
+      }
+      .share__mark svg { width: 17px; height: 17px; }
+      .share__brand { font-size: 15px; color: #1f2328; font-weight: 500; }
+      .share__tag {
+        margin-left: auto; font-size: 11px; color: #378add; background: #e6f1fb;
+        border-radius: 6px; padding: 3px 8px;
+      }
+      .share__card {
+        background: #fff; border: 1px solid #e5e5e5; border-radius: 16px; overflow: hidden;
+      }
+      .share__stage { background: #f5f5f5; display: flex; align-items: center; justify-content: center; }
+      .share__stage img { display: block; max-width: 100%; max-height: 72vh; object-fit: contain; }
+      .share__stage--missing { padding: 64px 24px; color: #888; font-size: 13px; }
+      .share__meta { padding: 16px 18px; border-top: 1px solid #e5e5e5; }
+      .share__title { margin: 0; font-size: 15px; font-weight: 500; color: #1f2328; }
+      .share__desc { margin: 6px 0 0; font-size: 13px; color: #666; white-space: pre-wrap; }
+      .share__sub { margin: 8px 0 0; font-size: 12px; color: #888; }
+      .share__actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+      .share__btn {
+        display: inline-flex; align-items: center; gap: 6px; font-size: 13px; padding: 8px 14px;
+        border-radius: 8px; border: 1.5px solid #378add; background: #378add; color: #fff;
+        text-decoration: none; cursor: pointer; font-family: inherit;
+      }
+      .share__btn--ghost { background: #fff; color: #378add; }
+      .share__btn svg { width: 14px; height: 14px; }
+      .share__foot { margin-top: 18px; text-align: center; font-size: 12px; color: #888; }
+      .share__note {
+        margin-top: 14px; font-size: 12px; color: #666; background: #fff;
+        border: 1px solid #e5e5e5; border-radius: 12px; padding: 12px 14px;
+        display: flex; gap: 9px; align-items: flex-start;
+      }
+      .share__note svg { width: 15px; height: 15px; flex: none; color: #378add; margin-top: 1px; }
+      @media (max-width: 560px) {
+        .share__actions { flex-direction: column; }
+        .share__btn { justify-content: center; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="share" role="main">
+      <div class="share__wrap">
+        <div class="share__head">
+          <span class="share__mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <circle cx="8.5" cy="8.5" r="1.4" fill="currentColor" stroke="none" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+          </span>
+          <span class="share__brand">__SITE_NAME__</span>
+          <span class="share__tag">分享的照片</span>
+        </div>
+
+        <div class="share__card">
+          __SHARE_STAGE__
+          <div class="share__meta">
+            <h1 class="share__title">__SHARE_TITLE__</h1>
+            __SHARE_DESC_BLOCK__
+            <p class="share__sub">由 __SHARE_UPLOADER__ 分享</p>
+            <div class="share__actions">
+              <a class="share__btn" href="__SHARE_DOWNLOAD__" download>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                下载原图
+              </a>
+            </div>
+          </div>
+        </div>
+
+        <div class="share__note">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="4" y="10.5" width="16" height="10.5" rx="2.8" />
+            <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+          </svg>
+          <span>你正在查看一张通过链接分享的照片。本站其他内容受访问密码保护，需要密码才能浏览。</span>
+        </div>
+
+        <p class="share__foot">© __SHARE_YEAR__ __SITE_NAME__</p>
+      </div>
+    </main>
+  </body>
+</html>
