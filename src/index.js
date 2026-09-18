@@ -16,6 +16,7 @@ import gateRoutes, {
   isGateEnabled,
   isGateTokenValid,
   gatePublicInfo,
+  tokenFromRequest,
 } from './routes/gate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -108,10 +109,10 @@ app.use(gateGuardAssets);
 app.use(express.static(DIST_DIR, { index: false }));
 
 app.get('*', (req, res) => {
-  const token = req.query.site_token;
-  // 关键：URL 里的 token 必须真正验签通过才返回应用入口。
-  // 否则任何人拼一个假 token 就能拿到应用页面（虽然 API 仍会拒绝，但不应泄露入口）。
-  const unlocked = isGateEnabled() && isGateTokenValid(token);
+  // 令牌可能来自 ?site_token=、X-Site-Token 头，或浏览器自动携带的 Cookie。
+  // 必须真正验签通过才返回应用入口，否则任何人拼一个假 token 就能拿到应用页面。
+  const token = tokenFromRequest(req);
+  const unlocked = isGateEnabled() && !!token;
 
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.type('html');

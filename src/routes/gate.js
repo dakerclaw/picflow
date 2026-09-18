@@ -66,6 +66,9 @@ export function isGateEnabled() {
   return !!hash;
 }
 
+/** Cookie 名：解锁后由服务端种下，浏览器自动携带，用于 <script>/<link> 这类请求 */
+export const GATE_COOKIE = 'picflow_site_token';
+
 /** 校验请求携带的访问令牌是否有效 */
 function verifyGateToken(req) {
   const header = req.headers['x-site-token'] || req.query.site_token;
@@ -73,6 +76,54 @@ function verifyGateToken(req) {
   return isGateTokenValid(header);
 }
 
+/**
+ * 从 Cookie 里取访问令牌。
+ *
+ * 为什么需要它：入口页里的 <script src="./assets/xxx.js"> 与 <link href="...css">
+ * 是**浏览器自己**发起的请求，JS 无法给它们附加 X-Site-Token 头，
+ * 也无法给它们拼 site_token 查询参数。若这类请求也被闸门要求令牌，
+ * 就会出现「密码输对了、入口页也返回了，但 bundle 401 → 整页空白」。
+ * Cookie 由浏览器自动携带，正好覆盖这类拿不到自定义头的请求。
+ */
+function tokenFromCookie(req) {
+  const raw = req.headers.cookie;
+  if (!raw) return '';
+  for (const part of String(raw).split(';')) {
+    const i = part.indexOf('=');
+    if (i < 0) continue;
+    if (part.slice(0, i).trim() === GATE_COOKIE) {
+      return decodeURIComponent(part.slice(i + 1).trim());
+    }
+  }
+  return '';
+}
+
+/** 同时接受 请求头 / 查询参数 / Cookie 三种来源的令牌 */
+function verifyGateTokenAny(req) {
+  if (verifyGateToken(req)) return true;
+  return isGateTokenValid(tokenFromCookie(req));
+}
+
+/**
+ * 取出请求中的访问令牌（按 请求头 → 查询参数 → Cookie 的优先级），
+ * 并用它验签。返回验签通过的那个令牌字符串，无效则返回 ''。
+ *
+ * 供入口页路由使用：无论访客是从 ?site_token= 进来的，还是靠 Cookie 直接访问首页，
+ * 都应拿到应用入口，而不是被反复丢回密码页。
+ */
+export function tokenFromRequest(req) {
+  const candidates = [
+    req.headers['x-site-token'],
+    req.query.site_token,
+    tokenFromCookie(req),
+  ];
+  for (const c of candidates) {
+    if (c && isGateTokenValid(c)) return String(c);
+  }
+  return '';
+}
+
+/** Cookie 名与属性（同站即可，无需跨站） */
 /**
  * 单独校验一个令牌字符串是否有效（供入口页路由复用，避免 URL 传假令牌被骗过）。
  * 只接受 scope=site 的令牌，不能拿用户 JWT 当访问令牌。
@@ -96,7 +147,7 @@ export function gateGuard(req, res, next) {
   if (!isGateEnabled()) return next();
   // 已被前置守卫（如管理员豁免）判定放行的请求，这里不再重复拦截
   if (req.__gatePassed) return next();
-  if (verifyGateToken(req)) return next();
+  if (verifyGateTokenAny(req)) return next();
 
   return res.status(401).json({
     error: '需要访问密码',
@@ -118,7 +169,7 @@ export function gateGuard(req, res, next) {
  */
 export function gateGuardAllowAdmin(req, res, next) {
   if (!isGateEnabled()) return next();
-  if (verifyGateToken(req) || isAdminToken(req)) {
+  if (verifyGateTokenAny(req) || isAdminToken(req)) {
     req.__gatePassed = true;
     return next();
   }
@@ -150,7 +201,7 @@ function isAdminToken(req) {
 /** /uploads 静态资源的守卫（支持 <img> 标签，失败时返回 1x1 透明图） */
 export function gateGuardUploads(req, res, next) {
   if (!isGateEnabled()) return next();
-  if (verifyGateToken(req)) return next();
+  if (verifyGateTokenAny(req)) return next();
 
   res.set('Cache-Control', 'no-store');
   res.set('Content-Type', 'image/svg+xml');
@@ -177,7 +228,8 @@ const STATIC_FILE_RE = /\.[a-z0-9]{1,8}$/i;
 
 export function gateGuardAssets(req, res, next) {
   if (!isGateEnabled()) return next();
-  if (verifyGateToken(req)) return next();
+  // 浏览器自动发起的 <script>/<link> 请求只能靠 Cookie 证明身份
+  if (verifyGateTokenAny(req)) return next();
   // HTML 文档交给后续路由处理
   if (!STATIC_FILE_RE.test(req.path)) return next();
   // 密码页自身的资源必须放行
@@ -191,7 +243,7 @@ export function gateGuardAssets(req, res, next) {
 router.get('/status', (req, res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
   const info = gatePublicInfo();
-  res.json({ ...info, authorized: !info.enabled ? true : verifyGateToken(req) });
+  res.json({ ...info, authorized: !info.enabled ? true : verifyGateTokenAny(req) });
 });
 
 // POST /api/gate/unlock — 提交密码换取访问令牌
@@ -216,6 +268,18 @@ router.post('/unlock', (req, res) => {
   clearAttempts(ip);
   const hours = Number(getSetting(SESSION_HOURS_KEY)) || 12;
   const token = jwt.sign({ scope: 'site' }, JWT_SECRET, { expiresIn: `${hours}h` });
+
+  // 同时种下 Cookie：入口页的 <script>/<link> 由浏览器自动发起，
+  // 拿不到自定义请求头，只能依赖浏览器自动携带的 Cookie。
+  // 不设 Max-Age，与「关闭浏览器即失效」的产品预期一致（会话 Cookie）。
+  const secure = req.secure || String(req.get('x-forwarded-proto') || '').includes('https');
+  res.cookie(GATE_COOKIE, token, {
+    httpOnly: false,          // 前端需要读取（图片 URL 会拼 site_token）
+    sameSite: 'lax',
+    secure,
+    path: '/',
+  });
+
   res.json({ ok: true, token, expiresInHours: hours });
 });
 

@@ -210,13 +210,24 @@ curl -X PUT http://localhost:3000/api/admin/site-password \
 | 项目 | 说明 |
 |------|------|
 | **保护范围** | 前端页面、全部 API、`/uploads` 图片文件、前端 JS/CSS 构建产物，一律拦截 |
-| **放行内容** | 仅密码页本身及其样式 `gate.css` |
-| **有效期** | 令牌存于 `sessionStorage`，**关闭浏览器即失效**，需重新输入 |
+| **放行内容** | 仅密码页本身及其样式 `gate.css`；以及**已解锁访客**（Cookie / 令牌）携带的构建产物请求 |
+| **有效期** | 令牌存于 `sessionStorage` **与** `picflow_site_token` 会话 Cookie，**关闭浏览器即失效**，需重新输入 |
 | **令牌时效** | 服务端签发时默认 12 小时，可在后台调整（`sessionHours`） |
 | **防爆破** | 同一 IP 10 分钟内连续输错 10 次，锁定 10 分钟 |
 | **缓存** | 锁定状态下所有响应带 `no-store`，不在浏览器留下受保护内容的副本 |
-| **令牌传递** | 页面与 API 走 `X-Site-Token` 请求头；图片等无法自定义头的资源走 `?site_token=` 参数 |
+| **令牌传递** | 页面与 API 走 `X-Site-Token` 请求头；图片等无法自定义头的资源走 `?site_token=` 参数；浏览器自动发起的 `<script>`/`<link>` 请求走 `picflow_site_token` Cookie |
 | **管理员豁免** | 锁定状态下，持有**合法管理员 JWT** 的请求仍可访问 `/api/admin/site-password`，避免「改不了密码 / 关不掉闸门」的死锁；其余管理员接口与普通用户一样被拦截 |
+
+> **为什么需要 Cookie**：入口页里的 `<script src="/assets/index-xxx.js">` 与 `<link href="...css">`
+> 是**浏览器自己**发起的请求，前端 JS 既加不了请求头，也拼不了查询参数。若这类请求也被要求令牌，
+> 就会表现为「密码输对了、也跳转了，但页面全白」——因为 JS/CSS 拿到 401，应用根本没跑起来。
+> 解锁时服务端会同时种下 `picflow_site_token` Cookie（会话级、`SameSite=Lax`），
+> 浏览器自动携带，正好覆盖这类请求。前端仍会读 `sessionStorage` 拼图片 URL，
+> 两条路互相独立、都可单独生效。
+>
+> **入口页资源必须用绝对路径**：`dist/index.html` 里的资源引用必须是 `/assets/...`，
+> 不能是 `./assets/...`。否则访问 `/admin` 这类 SPA 深链时，浏览器会把它解析成
+> `/admin/assets/...`，拿到的是 HTML 兜底页而不是 JS（MIME 错误）→ 同样白屏。
 
 > 管理员豁免只对「管理访问密码」这一个接口生效，且服务端会重新查库确认 `is_admin`（不信任令牌里的声明）。被禁用的账号即使自称管理员也不豁免。
 
@@ -225,10 +236,13 @@ curl -X PUT http://localhost:3000/api/admin/site-password \
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
 | GET | `/api/gate/status` | 公开 | 查询加密状态与是否已解锁 |
-| POST | `/api/gate/unlock` | 公开 | 提交密码换取访问令牌 |
+| POST | `/api/gate/unlock` | 公开 | 提交密码换取访问令牌，**并种下 `picflow_site_token` Cookie** |
 | GET | `/api/admin/site-password` | 管理员 | 读取加密设置（不含密码明文）。**锁定状态下仍可访问** |
 | PUT | `/api/admin/site-password` | 管理员 | 修改密码 / 开关 / 提示语 / 有效期。**锁定状态下仍可访问**。`enabled:true` 时若此前未设置过密码且本次也没带 `password`，返回 400 |
 
+> 访问令牌可通过三种方式提交，任一有效即可：`X-Site-Token` 请求头、`?site_token=` 查询参数、
+> `picflow_site_token` Cookie。
+>
 > `hint` 留空表示密码页不显示提示语。默认值 `请输入访问密码` 会被视作「未设置」。
 
 ### ⚠️ 忘记密码怎么办
@@ -245,6 +259,21 @@ rm settings.json && pm2 restart picflow
 ```
 
 > Docker 部署时 `settings.json` 位于 `data/` 目录（已挂载为数据卷）。
+
+### ⚠️ 输入密码后页面空白
+
+按顺序排查：
+
+1. **浏览器 Console 是否报 401**（`/assets/*.js` 或 `/assets/*.css`）。
+   若是，说明静态资源守卫没放行 —— 检查 `gateGuardAssets` 是否调用了
+   `verifyGateTokenAny`（要认 Cookie），以及 `gate.html` 里解锁后是否真的跳转了。
+2. **Application → Cookies 里有没有 `picflow_site_token`**。
+   没有说明 `POST /api/gate/unlock` 的响应没带 `Set-Cookie`，
+   通常是中间件或反向代理把 Cookie 头吞了。
+3. **Network 里 JS 请求的 URL 是不是 `/admin/assets/...` 这种畸形路径**。
+   是则说明 `dist/index.html` 用了 `./assets/...` 相对路径，
+   必须改成 `/assets/...`。
+4. 反向代理（Nginx）注意放行 `Set-Cookie` 与 `Cookie` 头，不要做 `proxy_cookie_path` 之类的改写。
 
 ## 📡 API 文档
 
