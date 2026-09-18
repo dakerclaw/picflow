@@ -6,3 +6,8 @@ data/
 uploads/*
 !uploads/.gitkeep
 picflow.log
+
+# 本地联调时产生的临时数据库/日志
+.*.db
+.*.db.settings.json
+.*.log

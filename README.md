@@ -14,6 +14,7 @@
 | **图片下载** | 卡片和预览页均可直接下载 |
 | **图片分享** | 一键复制链接，支持微博/Twitter 分享 |
 | **搜索过滤** | 按标题、标签、作者实时搜索 |
+| **全局访问密码** | 开启后整站加密，输入密码才能浏览，支持后台随时开关/改密 |
 | **响应式设计** | 桌面端/平板/手机全适配 |
 
 ## 🏗 技术栈
@@ -31,14 +32,19 @@
 ```
 picflow/
 ├── src/
-│   ├── index.js              # Express 入口（API + 静态文件服务）
+│   ├── index.js              # Express 入口（API + 静态文件服务 + 访问密码闸门）
 │   ├── database.js            # SQLite 封装
 │   ├── middleware/
 │   │   └── auth.js            # JWT 鉴权中间件
 │   └── routes/
 │       ├── auth.js            # 注册/登录/个人信息 API
-│       └── photos.js          # 图片上传/列表/点赞/删除 API
+│       ├── photos.js          # 图片上传/列表/点赞/删除 API
+│       ├── settings.js        # 站点设置 API
+│       ├── admin.js           # 管理员 API（用户管理、访问密码）
+│       └── gate.js            # 全局访问密码（校验/开关/令牌）
 ├── dist/                      # 前端构建产物（已内置）
+│   ├── gate.html              # 未解锁时展示的密码页
+│   └── gate.css               # 密码页样式
 ├── uploads/                   # 图片文件存储目录
 ├── package.json
 ├── Dockerfile                 # Docker 镜像构建
@@ -166,6 +172,79 @@ rm -rf picflow
 | `JWT_SECRET` | `change-me-...` | JWT 签名密钥，**务必修改** |
 | `UPLOAD_DIR` | `./uploads` | 图片存储目录 |
 | `DB_PATH` | `./picflow.db` | SQLite 数据库路径 |
+
+## 🔐 全局访问密码
+
+开启后，**整站加密**：未通过验证的访客只能看到一个密码输入页，图片列表、图片文件、上传等接口一律拒绝访问。
+
+### 如何开启
+
+1. 用管理员账号登录（第一个注册的账号自动成为管理员）
+2. 点击顶部导航的 **管理** 按钮进入管理后台
+3. 切到 **🔐 访问密码** 页签
+4. 打开开关、设置密码（可选填提示语、调整有效期），点 **保存设置**，**立即生效**（无需重启服务）
+
+> **默认关闭**：全新安装时整站是公开的，不需要任何操作；只有管理员主动打开开关后才会要求输入密码。
+>
+> 关闭开关即可恢复公开访问，密码本身会保留，重新打开开关无需再设一次。
+>
+> 开启保护前必须先设置密码：若开关已打开但没有密码，前端会提示「请先设置访问密码」，服务端也会拒绝该请求，避免出现「显示已开启、实际仍可匿名访问」的假成功状态。
+
+管理接口：
+
+```bash
+# 开启并设置密码
+curl -X PUT http://localhost:3000/api/admin/site-password \
+  -H "Authorization: Bearer <管理员JWT>" \
+  -H "Content-Type: application/json" \
+  -d '{"enabled":true,"password":"你的密码","hint":"请输入访问密码","sessionHours":12}'
+
+# 关闭
+curl -X PUT http://localhost:3000/api/admin/site-password \
+  -H "Authorization: Bearer <管理员JWT>" \
+  -H "Content-Type: application/json" -d '{"enabled":false}'
+```
+
+### 行为说明
+
+| 项目 | 说明 |
+|------|------|
+| **保护范围** | 前端页面、全部 API、`/uploads` 图片文件、前端 JS/CSS 构建产物，一律拦截 |
+| **放行内容** | 仅密码页本身及其样式 `gate.css` |
+| **有效期** | 令牌存于 `sessionStorage`，**关闭浏览器即失效**，需重新输入 |
+| **令牌时效** | 服务端签发时默认 12 小时，可在后台调整（`sessionHours`） |
+| **防爆破** | 同一 IP 10 分钟内连续输错 10 次，锁定 10 分钟 |
+| **缓存** | 锁定状态下所有响应带 `no-store`，不在浏览器留下受保护内容的副本 |
+| **令牌传递** | 页面与 API 走 `X-Site-Token` 请求头；图片等无法自定义头的资源走 `?site_token=` 参数 |
+| **管理员豁免** | 锁定状态下，持有**合法管理员 JWT** 的请求仍可访问 `/api/admin/site-password`，避免「改不了密码 / 关不掉闸门」的死锁；其余管理员接口与普通用户一样被拦截 |
+
+> 管理员豁免只对「管理访问密码」这一个接口生效，且服务端会重新查库确认 `is_admin`（不信任令牌里的声明）。被禁用的账号即使自称管理员也不豁免。
+
+### 密码接口
+
+| 方法 | 路径 | 鉴权 | 说明 |
+|------|------|------|------|
+| GET | `/api/gate/status` | 公开 | 查询加密状态与是否已解锁 |
+| POST | `/api/gate/unlock` | 公开 | 提交密码换取访问令牌 |
+| GET | `/api/admin/site-password` | 管理员 | 读取加密设置（不含密码明文）。**锁定状态下仍可访问** |
+| PUT | `/api/admin/site-password` | 管理员 | 修改密码 / 开关 / 提示语 / 有效期。**锁定状态下仍可访问**。`enabled:true` 时若此前未设置过密码且本次也没带 `password`，返回 400 |
+
+> `hint` 留空表示密码页不显示提示语。默认值 `请输入访问密码` 会被视作「未设置」。
+
+### ⚠️ 忘记密码怎么办
+
+密码以 bcrypt 哈希存储，无法找回，只能重置。任选一种：
+
+```bash
+# 方式一：删除 settings.json 里的两个键后重启服务
+#   site_password_hash
+#   site_password_enabled
+
+# 方式二：直接删除 settings.json（会一并重置其他站点设置）
+rm settings.json && pm2 restart picflow
+```
+
+> Docker 部署时 `settings.json` 位于 `data/` 目录（已挂载为数据卷）。
 
 ## 📡 API 文档
 

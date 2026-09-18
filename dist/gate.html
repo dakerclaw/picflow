@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="color-scheme" content="light dark" />
+    <title>__SITE_NAME__ · 需要访问密码</title>
+    <link rel="stylesheet" href="/gate.css" />
+  </head>
+  <body>
+    <main class="gate" role="main">
+      <section class="gate__card" aria-labelledby="gateTitle">
+        <!-- 卡片头：品牌标记 + 站名 + 状态标签（对齐主站的白底细线风格） -->
+        <header class="gate__hero">
+          <span class="gate__mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <circle cx="8.5" cy="8.5" r="1.4" fill="currentColor" stroke="none" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+          </span>
+          <span class="gate__brand">__SITE_NAME__</span>
+          <span class="gate__tag">已加密</span>
+        </header>
+
+        <div class="gate__badge" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="10.5" width="16" height="10.5" rx="2.8" />
+            <path d="M8 10.5V7a4 4 0 0 1 8 0v3.5" />
+            <circle cx="12" cy="15.7" r="1.3" fill="currentColor" stroke="none" />
+          </svg>
+        </div>
+
+        <div class="gate__body">
+          <h1 class="gate__title" id="gateTitle">此站点受密码保护</h1>
+          <p class="gate__hint">__SITE_HINT__</p>
+
+          <form class="gate__form" id="gateForm" novalidate>
+            <div class="gate__field" id="gateField">
+              <span class="gate__field-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="4.5" y="10.5" width="15" height="9.5" rx="2.6" />
+                  <path d="M8.2 10.5V7.6a3.8 3.8 0 0 1 7.6 0v2.9" />
+                </svg>
+              </span>
+              <input
+                id="gatePassword"
+                type="password"
+                name="password"
+                placeholder="请输入访问密码"
+                autocomplete="current-password"
+                spellcheck="false"
+                autocapitalize="off"
+                aria-label="访问密码"
+                aria-describedby="gateError"
+                required
+                autofocus
+              />
+              <button type="button" class="gate__toggle" id="gateToggle"
+                      aria-label="显示密码" aria-pressed="false" tabindex="-1">
+                <svg class="gate__eye-open" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2.6 12S6.2 5.8 12 5.8 21.4 12 21.4 12 17.8 18.2 12 18.2 2.6 12 2.6 12Z" />
+                  <circle cx="12" cy="12" r="2.9" />
+                </svg>
+                <svg class="gate__eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M10.6 6.1A8.9 8.9 0 0 1 12 6c5.8 0 9.4 6 9.4 6a15.8 15.8 0 0 1-3 3.7" />
+                  <path d="M6.3 7.9A15.5 15.5 0 0 0 2.6 12s3.6 6.2 9.4 6.2a8.6 8.6 0 0 0 3.6-.8" />
+                  <path d="m3.5 3.5 17 17" />
+                </svg>
+              </button>
+            </div>
+
+            <p class="gate__error" id="gateError" role="alert" aria-live="polite"></p>
+
+            <button type="submit" class="gate__submit" id="gateSubmit">
+              <span class="gate__spinner" aria-hidden="true"></span>
+              <span class="gate__submit-text">进入网站</span>
+              <svg class="gate__arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 12h13M13 6.5 18.5 12 13 17.5" />
+              </svg>
+            </button>
+          </form>
+
+          <ul class="gate__facts">
+            <li>
+              <span class="gate__dot" aria-hidden="true"></span>
+              已通过密码验证的访客可直接浏览
+            </li>
+            <li>
+              <span class="gate__dot" aria-hidden="true"></span>
+              关闭浏览器后需重新验证
+            </li>
+          </ul>
+        </div>
+
+        <footer class="gate__foot">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 3.5 5 6.3v5c0 4.2 2.9 7.6 7 9.2 4.1-1.6 7-5 7-9.2v-5L12 3.5Z" />
+            <path d="m9.3 12 1.9 1.9 3.6-3.7" />
+          </svg>
+          <span>本站已开启访问保护，内容仅对授权访客可见</span>
+        </footer>
+      </section>
+    </main>
+
+    <script>
+      (function () {
+        'use strict';
+
+        var STORAGE_KEY = 'picflow_site_token';
+        var form = document.getElementById('gateForm');
+        var field = document.getElementById('gateField');
+        var input = document.getElementById('gatePassword');
+        var submit = document.getElementById('gateSubmit');
+        var submitText = form.querySelector('.gate__submit-text');
+        var error = document.getElementById('gateError');
+        var toggle = document.getElementById('gateToggle');
+        var busy = false;
+
+        // 如果已经解锁过，直接带着令牌进站，避免重复输入
+        (function autoResume() {
+          var existing = '';
+          try { existing = sessionStorage.getItem(STORAGE_KEY) || ''; } catch (e) { /* 忽略 */ }
+          if (!existing) return;
+          var url = new URL(location.href);
+          if (url.searchParams.get('site_token') === existing) return;
+          url.searchParams.set('site_token', existing);
+          location.replace(url.toString());
+        })();
+
+        toggle.addEventListener('click', function () {
+          var show = input.type === 'password';
+          input.type = show ? 'text' : 'password';
+          toggle.setAttribute('aria-pressed', show ? 'true' : 'false');
+          toggle.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+          toggle.classList.toggle('is-on', show);
+          input.focus();
+        });
+
+        function clearError() {
+          if (!error.textContent) return;
+          error.textContent = '';
+          field.classList.remove('is-invalid');
+        }
+
+        function fail(msg) {
+          error.textContent = msg || '';
+          field.classList.add('is-invalid');
+          form.classList.add('is-shake');
+          window.setTimeout(function () { form.classList.remove('is-shake'); }, 420);
+          input.focus();
+          input.select();
+        }
+
+        function setBusy(state) {
+          busy = state;
+          submit.disabled = state;
+          submitText.textContent = state ? '验证中…' : '进入网站';
+          submit.classList.toggle('is-busy', state);
+        }
+
+        form.addEventListener('submit', function (e) {
+          e.preventDefault();
+          if (busy) return;
+
+          var password = input.value;
+          if (!password) return fail('请输入访问密码');
+
+          setBusy(true);
+          error.textContent = '';
+          field.classList.remove('is-invalid');
+
+          fetch('/api/gate/unlock', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: password }),
+            cache: 'no-store',
+          })
+            .then(function (r) {
+              return r.json()
+                .catch(function () { return {}; })
+                .then(function (d) { return { ok: r.ok, status: r.status, data: d }; });
+            })
+            .then(function (res) {
+              if (res.ok) {
+                try { sessionStorage.setItem(STORAGE_KEY, res.data.token); } catch (err) { /* 隐私模式降级 */ }
+                var url = new URL(location.href);
+                url.searchParams.set('site_token', res.data.token);
+                submit.classList.add('is-done');
+                submitText.textContent = '验证成功';
+                location.replace(url.toString());
+                return;
+              }
+              var msg = (res.data && res.data.error) || '验证失败，请重试';
+              if (res.status === 429) msg = '尝试次数过多，请稍后再试';
+              fail(msg);
+              setBusy(false);
+            })
+            .catch(function () {
+              fail('网络异常，请检查连接后重试');
+              setBusy(false);
+            });
+        });
+
+        input.addEventListener('input', clearError);
+
+        // 直接输入即可重新验证，不必先手动聚焦
+        window.addEventListener('focus', function () {
+          if (!busy && !input.value) input.focus();
+        });
+      })();
+    </script>
+  </body>
+</html>

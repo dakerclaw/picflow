@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import db from '../database.js';
 import { authRequired } from '../middleware/auth.js';
+import { readGateSettings, writeGateSettings } from './gate.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
@@ -80,6 +81,23 @@ router.post('/users/:id/ban', adminRequired, (req, res) => {
   db.save();
 
   res.json({ ok: true, is_banned: newBanned });
+});
+
+// GET /api/admin/site-password - 读取全局访问密码设置
+router.get('/site-password', adminRequired, (_req, res) => {
+  res.json({ sitePassword: readGateSettings() });
+});
+
+// PUT /api/admin/site-password - 修改全局访问密码设置
+router.put('/site-password', adminRequired, (req, res) => {
+  const { enabled, password, hint, sessionHours } = req.body || {};
+  try {
+    writeGateSettings({ enabled, password, hint, sessionHours });
+  } catch (e) {
+    return res.status(400).json({ error: e.message });
+  }
+  console.log('[admin] site-password updated:', JSON.stringify(readGateSettings()));
+  res.json({ ok: true, sitePassword: readGateSettings() });
 });
 
 export default router;
