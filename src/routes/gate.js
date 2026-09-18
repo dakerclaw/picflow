@@ -123,7 +123,6 @@ export function tokenFromRequest(req) {
   return '';
 }
 
-/** Cookie 名与属性（同站即可，无需跨站） */
 /**
  * 单独校验一个令牌字符串是否有效（供入口页路由复用，避免 URL 传假令牌被骗过）。
  * 只接受 scope=site 的令牌，不能拿用户 JWT 当访问令牌。
