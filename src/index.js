@@ -2,8 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import db from './database.js';
+import { PORT, DIST_DIR, UPLOAD_DIR, TRUST_PROXY } from './config.js';
 import authRoutes from './routes/auth.js';
 import photoRoutes from './routes/photos.js';
 import settingsRoutes from './routes/settings.js';
@@ -20,16 +20,28 @@ import gateRoutes, {
   isShareTokenValidFor,
 } from './routes/gate.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3001;
-
-const DIST_DIR = path.join(__dirname, '..', 'dist');
-const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, '..', 'uploads');
 
 app.disable('etag');
+// 告诉全世界「这是 Express」没有任何好处，只方便别人按版本找漏洞
+app.disable('x-powered-by');
+// 反向代理支持：默认关闭，由部署者按实际情况用 TRUST_PROXY 打开（详见 config.js）
+if (TRUST_PROXY !== false) app.set('trust proxy', TRUST_PROXY);
 app.use(cors({ exposedHeaders: ['X-Site-Required'] }));
 app.use(express.json());
+
+/**
+ * 基础安全响应头。
+ * 放在最前面，保证页面、接口、图片都带上。
+ * 重点是把 MIME 嗅探关掉：否则浏览器可能无视我们声明的 Content-Type，
+ * 把 uploads 里某个内容可疑的文件「猜」成 HTML 来执行。
+ */
+app.use((_req, res, next) => {
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('X-Frame-Options', 'SAMEORIGIN');
+  res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 
 /**
  * 分享链接豁免：`/share/<photoId>?t=<shareToken>` 这类请求即便在整站加密状态下也放行。
@@ -91,8 +103,53 @@ app.use('/api', (err, req, res, _next) => {
   res.status(status).json({ error: (err && err.message) || '服务器内部错误' });
 });
 
+/**
+ * 允许浏览器**内联**渲染的扩展名 → Content-Type。
+ * 只有这些后缀会被当作图片返回，其余一律按二进制附件下载。
+ */
+const INLINE_UPLOAD_TYPES = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.avif': 'image/avif',
+};
+
+/**
+ * /uploads 的响应头策略。
+ *
+ * 为什么不能直接用 express.static 的默认行为：它按扩展名决定 Content-Type，
+ * 于是 uploads 里只要存在一个 .html（上传校验漏掉、或历史遗留），
+ * 浏览器就会把它当成**本站同源的页面**执行 —— 脚本可以读走站点访问令牌
+ * （那份 Cookie 为了 <img> 能加载而刻意设为非 httpOnly）和登录态。
+ * 这里做三层兜底：
+ *   1. 扩展名不在白名单 → 强制 application/octet-stream + attachment，只能下载；
+ *   2. nosniff 禁止浏览器自行猜测类型；
+ *   3. CSP sandbox 让即使被打开的可执行文档也无法运行脚本、发起请求。
+ */
+function setUploadHeaders(res, filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  res.set('X-Content-Type-Options', 'nosniff');
+  res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+  res.set('Cross-Origin-Resource-Policy', 'same-origin');
+  const inlineType = INLINE_UPLOAD_TYPES[ext];
+  if (inlineType) {
+    res.set('Content-Type', inlineType);
+    res.set('Content-Disposition', 'inline');
+  } else {
+    res.set('Content-Type', 'application/octet-stream');
+    res.set('Content-Disposition', 'attachment');
+  }
+}
+
 // 图片文件同样受闸门保护（<img> 无法带请求头，改用 site_token 查询参数）
-app.use('/uploads', gateGuardUploads, express.static(path.join(__dirname, '..', 'uploads')));
+app.use('/uploads', gateGuardUploads, express.static(UPLOAD_DIR, {
+  index: false,
+  dotfiles: 'deny',
+  setHeaders: setUploadHeaders,
+}));
 
 // ---------------------------------------------------------------------------
 // 前端入口
@@ -265,6 +322,21 @@ function getSiteName() {
     if (row?.value) return row.value;
   } catch { /* ignore */ }
   return 'PicFlow';
+}
+
+/**
+ * 优雅退出：容器收到的 SIGTERM 必须自己接住。
+ *
+ * 数据库是「内存里改、按需落盘」的 sql.js，默认没有收到信号就落盘这回事。
+ * `docker compose down` / `up -d --build` 都会先发 SIGTERM，进程若直接死掉，
+ * 最后一次改动就丢了（表现是「刚传完的图重启后不见了」）。
+ */
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => {
+    console.log(`[server] 收到 ${sig}，正在落盘数据库…`);
+    try { db.close(); } catch (e) { console.error('[server] 落盘失败:', e.message); }
+    process.exit(0);
+  });
 }
 
 app.listen(PORT, '0.0.0.0', () => {

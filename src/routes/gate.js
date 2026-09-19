@@ -2,16 +2,17 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import db from '../database.js';
+import { JWT_SECRET, GATE_SETTING_KEYS } from '../config.js';
 
 const router = Router();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'picflow-secret-change-in-production';
-
-// 全局访问密码相关配置
-export const SITE_PASSWORD_KEY = 'site_password_hash';     // bcrypt 哈希
-export const SITE_PASSWORD_ENABLED_KEY = 'site_password_enabled'; // 0/1
-export const SITE_PASSWORD_HINT_KEY = 'site_password_hint';       // 提示文案
-export const SESSION_HOURS_KEY = 'site_password_session_hours';   // 会话有效小时数
+// 全局访问密码相关配置。
+// 键名统一由 config.js 的清单派生 —— 那份清单同时被 database.js（备份恢复时
+// 跳过密钥）和 routes/settings.js（对外白名单）使用，写死四遍必然会漏。
+export const SITE_PASSWORD_KEY = GATE_SETTING_KEYS[0];            // bcrypt 哈希
+export const SITE_PASSWORD_ENABLED_KEY = GATE_SETTING_KEYS[1];    // 0/1
+export const SITE_PASSWORD_HINT_KEY = GATE_SETTING_KEYS[2];       // 提示文案
+export const SESSION_HOURS_KEY = GATE_SETTING_KEYS[3];            // 会话有效小时数
 
 const DEFAULTS = {
   [SITE_PASSWORD_ENABLED_KEY]: '0',
@@ -70,7 +71,7 @@ export function isGateEnabled() {
 export const GATE_COOKIE = 'picflow_site_token';
 
 /**
- * 分享令牌：只授权「看某一??张照片」，不等于站点通行证。
+ * 分享令牌：只授权「看某一张照片」，不等于站点通行证。
  *
  * 为什么需要独立令牌：在开启整站密码的前提下，分享出去的单张图片链接
  * 若要求对方先输站点密码，等于把密码告诉了所有人 —— 分享功能就废了。

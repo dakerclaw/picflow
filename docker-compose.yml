@@ -7,9 +7,20 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - JWT_SECRET=${JWT_SECRET:-picflow-production-secret}
+      # JWT 密钥：留空时服务端会在首次启动自动生成一个随机密钥，并保存到
+      # 数据卷里的 .jwt-secret（/app/data/.jwt-secret），重启后保持不变。
+      #
+      # 注意不要把这里写成一个固定字符串提交进仓库：这个密钥负责签发
+      # 站点访问令牌、分享令牌和用户登录态，一旦公开，任何人都能自己签一个
+      # 令牌直接绕过整站访问密码。想手动指定就填一个 32 位以上的随机串。
+      - JWT_SECRET=${JWT_SECRET:-}
       - UPLOAD_DIR=/app/uploads
       - DB_PATH=/app/data/picflow.db
+      # 反向代理支持：默认关闭。若前面挂了 nginx / Caddy 等反代，
+      # 必须打开它，否则所有访客会被当成同一个 IP（达到失败上限会锁全站）。
+      # 若容器端口可以被公网直连，则保持关闭，否则别人伪造 X-Forwarded-For
+      # 就能绕开「按 IP 限速」，无限次试访问密码。
+      # - TRUST_PROXY=1
     volumes:
       - ./uploads:/app/uploads
       - ./data:/app/data

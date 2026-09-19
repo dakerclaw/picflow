@@ -1,13 +1,10 @@
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import db from '../database.js';
 import { authRequired } from '../middleware/auth.js';
 import { readGateSettings, writeGateSettings } from './gate.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
+import { UPLOAD_DIR } from '../config.js';
 
 const router = Router();
 
@@ -48,10 +45,10 @@ router.delete('/users/:id', adminRequired, (req, res) => {
   const userPhotos = db.prepare('SELECT filename FROM photos WHERE uploader_id = ?').all(id);
   for (const p of userPhotos) {
     try {
-      const fp = path.join(UPLOADS_DIR, p.filename);
+      const fp = path.join(UPLOAD_DIR, p.filename);
       if (fs.existsSync(fp)) fs.unlinkSync(fp);
       // 同时尝试删除 thumb_ 前缀的缩略图
-      const tp = path.join(UPLOADS_DIR, 'thumb_' + p.filename);
+      const tp = path.join(UPLOAD_DIR, 'thumb_' + p.filename);
       if (fs.existsSync(tp)) fs.unlinkSync(tp);
     } catch (e) {
       console.warn('删除图片文件失败:', e.message);

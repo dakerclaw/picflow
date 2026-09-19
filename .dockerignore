@@ -1,0 +1,14 @@
+node_modules
+.git
+.gitignore
+.pfcheck
+.tmptest
+*.log
+*.db
+*.db.tmp
+settings.json
+.jwt-secret
+.env
+data
+uploads
+preview

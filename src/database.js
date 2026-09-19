@@ -1,40 +1,57 @@
 import initSqlJs from 'sql.js';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'picflow.db');
+import { DB_PATH, SETTINGS_JSON_PATH, GATE_SETTING_KEY_SET as GATE_KEYS } from './config.js';
 
 let db;
 
+/** 与数据库同目录的临时文件，保证 rename 是同文件系统内的原子替换 */
+const DB_TMP_PATH = DB_PATH + '.tmp';
+
+/**
+ * 落盘数据库。
+ *
+ * 必须是「先写临时文件、再 rename 覆盖」：直接 writeFileSync 覆盖原文件的
+ * 那一瞬间，磁盘上是一个被截断的、不可用的数据库；只要进程恰好在这时被
+ * 杀掉（docker compose down、OOM、断电），整个站点的数据就没了。
+ * rename 在同一文件系统内是原子操作，任何时刻读到的都是「旧完整版」或
+ * 「新完整版」，不存在中间态。
+ */
 function saveDb() {
   try {
     const data = db.export();
     // 使用 Buffer.from() 显式复制 ArrayBuffer，确保 writeFileSync 拿到独立副本
     const buf = Buffer.from(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
-    fs.writeFileSync(DB_PATH, buf);
-    // 验证写入：如果文件大小为 0 说明写入失败
-    const stat = fs.statSync(DB_PATH);
-    if (stat.size === 0) {
-      console.error(`[db] WARNING: ${DB_PATH} was written but is 0 bytes! Retrying...`);
-      fs.writeFileSync(DB_PATH, buf);
-      const stat2 = fs.statSync(DB_PATH);
-      console.log(`[db] retry: ${DB_PATH} (${stat2.size} bytes)`);
-    } else {
-      console.log(`[db] saved ${DB_PATH} (${stat.size} bytes)`);
+    if (buf.length === 0) {
+      console.error(`[db] 导出的数据库是 0 字节，已放弃本次落盘以免覆盖完整数据。`);
+      return;
     }
+    fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+    fs.writeFileSync(DB_TMP_PATH, buf);
+    const tmpSize = fs.statSync(DB_TMP_PATH).size;
+    if (tmpSize !== buf.length) {
+      console.error(`[db] 临时文件写入不完整（${tmpSize}/${buf.length} 字节），已放弃本次落盘。`);
+      return;
+    }
+    fs.renameSync(DB_TMP_PATH, DB_PATH);
+    console.log(`[db] saved ${DB_PATH} (${buf.length} bytes)`);
   } catch (e) {
     console.error('[db] Failed to save database:', e.message);
   }
 }
 
-// 设置 JSON 文件路径 —— 强制放在数据库同一目录（Docker 中即 /app/data/，在挂载卷上持久化）
-const SETTINGS_JSON_PATH = process.env.SETTINGS_JSON_PATH || path.join(path.dirname(DB_PATH), 'settings.json');
-
+/**
+ * 导出一份设置备份（同目录的 settings.json）。
+ *
+ * 注意这里落盘的是**公开设置**（站名、标题等），闸门密码哈希这类密钥不应写进
+ * 明文备份文件（见 routes/settings.js 的白名单）。
+ */
 function saveSettingsJson(settingsObj) {
   try {
-    fs.writeFileSync(SETTINGS_JSON_PATH, JSON.stringify(settingsObj, null, 2), 'utf-8');
+    const tmp = SETTINGS_JSON_PATH + '.tmp';
+    fs.mkdirSync(path.dirname(SETTINGS_JSON_PATH), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify(settingsObj, null, 2), { encoding: 'utf-8', mode: 0o600 });
+    fs.renameSync(tmp, SETTINGS_JSON_PATH);
     console.log(`[db] settings.json saved (${Object.keys(settingsObj).length} keys)`);
   } catch (e) {
     console.error('[db] Failed to save settings.json:', e.message);
@@ -65,6 +82,13 @@ class Statement {
     this.sql = sql;
   }
 
+  /**
+   * 注意：**不要**在 openDatabase 内部直接用 sql.js 原生的
+   * `db.prepare(sql).run(a, b)` 写数据。原生 Statement.run() 只接受「一个」
+   * 参数（数组或对象），传成两个位置参数时它会把这个值当成对象去绑定，
+   * 结果所有占位符全部落成 NULL —— 而且**不报任何错**。
+   * 这里包一层的意义就是把这个坑堵住：无论调用方怎么写都能正确绑定。
+   */
   run(...params) {
     this.db.run(this.sql, params.length === 1 && Array.isArray(params[0]) ? params[0] : params);
     return { changes: this.db.getRowsModified() };
@@ -204,6 +228,24 @@ async function openDatabase() {
     value TEXT
   )`);
 
+  // 注意：以下所有**写**操作都必须走本文件包装过的 Statement，不能用
+  // sql.js 原生的 db.prepare()。原生 Statement.run() 只接受一个参数，
+  // 写成 run(k, v) 时所有占位符会静默落成 NULL（详见类注释）。
+  const prep = (sql) => new Statement(db, sql);
+
+  // 清掉历史上被写坏的「空键」行。
+  //
+  // 2026-09 之前这里用的是 sql.js 原生 Statement.run(k, v)，两个位置参数会被
+  // 静默绑定成 NULL，于是每次全新安装都会在 settings 里留下 7 行 [null, null]
+  // （TEXT PRIMARY KEY 在 SQLite 里允许 NULL，所以连主键重复都不报）。
+  // 这些行本身没有意义，留着只会让「设置表是空的」这个事实看不出来。
+  try {
+    const cleaned = prep('DELETE FROM settings WHERE key IS NULL OR key = ?').run('');
+    if (cleaned.changes > 0) console.log(`[db] 清理了 ${cleaned.changes} 行无主设置（历史写入缺陷遗留）`);
+  } catch (e) {
+    console.log('[db] 空键清理跳过:', e.message);
+  }
+
   // 插入默认设置（使用安全函数确保 value 不为 NULL）
   const year = new Date().getFullYear();
   const defaults = [
@@ -214,25 +256,37 @@ async function openDatabase() {
   ];
 
   // 安全插入：跳过 value 为 null/undefined 的条目
-  const insertSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  const insertSetting = prep('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [k, v] of defaults) {
     if (v != null) insertSetting.run(k, String(v));
   }
 
   // 从 settings.json 恢复设置（双重保险：即使 sql.js 数据库损坏也能恢复）
+  //
+  // 语义必须是「只补缺失的键」（INSERT OR IGNORE），不能是覆盖式写入：
+  // 覆盖意味着磁盘上一个陈旧的备份文件能在每次重启时把管理员的**新**设置
+  // 改回旧值 —— 例如明明在后台关掉了访问密码，重启一次又锁上了。
   const jsonSettings = loadSettingsJson();
   if (jsonSettings && typeof jsonSettings === 'object' && !Array.isArray(jsonSettings)) {
-    const upsert = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    const fillMissing = prep('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
     let restored = 0;
+    const skipped = [];
     for (const [k, v] of Object.entries(jsonSettings)) {
-      if (v != null) {
-        upsert.run(k, String(v));
-        restored++;
-      } else {
+      if (k === '') continue;
+      // 闸门相关密钥一律不从备份文件恢复：它们是管理员显式配置的，
+      // 让一个磁盘文件决定「站点是否上锁」只会带来难以解释的锁定。
+      if (GATE_KEYS.has(k)) { skipped.push(k); continue; }
+      if (v == null) {
         console.log(`[db] Skipping setting "${k}" (value is ${v})`);
+        continue;
       }
+      // 只有真的插进去了才算恢复（INSERT OR IGNORE 命中已有键时 changes 为 0）
+      if (fillMissing.run(k, String(v)).changes > 0) restored++;
     }
     if (restored > 0) console.log(`[db] Restored ${restored} settings from settings.json`);
+    if (skipped.length > 0) {
+      console.log(`[db] 备份里的闸门密钥未参与恢复（以数据库为准）: ${skipped.join(', ')}`);
+    }
   }
 
   db.run(`CREATE TABLE IF NOT EXISTS photos (
