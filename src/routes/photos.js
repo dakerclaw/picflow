@@ -94,8 +94,52 @@ function withShareTokens(photos) {
   return (photos || []).map(withShareToken);
 }
 
+/**
+ * 标签归一化：接受字符串（逗号/分号/空白分隔，或 JSON 数组文本）或数组。
+ * 去空、去重、去引号、截断长度，最多 20 个 —— 结果直接 JSON.stringify 存库。
+ */
+function normalizeTags(raw) {
+  let arr = [];
+  if (Array.isArray(raw)) {
+    arr = raw;
+  } else if (typeof raw === 'string' && raw.trim()) {
+    const text = raw.trim();
+    if (text.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(text);
+        arr = Array.isArray(parsed) ? parsed : [text];
+      } catch {
+        arr = text.split(/[,，;；]+/);
+      }
+    } else {
+      arr = text.split(/[,，;；\s]+/);
+    }
+  }
+
+  const out = [];
+  const seen = new Set();
+  for (const item of arr) {
+    const value = String(item == null ? '' : item)
+      .replace(/["'\\]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 24);
+    if (!value) continue;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push(value);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+/** 把 LIKE 通配符转义，避免标签里的 % _ 被当作模糊匹配 */
+function escapeLike(value) {
+  return String(value).replace(/[\\%_]/g, (m) => '\\' + m);
+}
+
 router.get('/', authOptional, (req, res) => {
-  const { search, year, month, day, page = 1, limit = 20 } = req.query;
+  const { search, tag, author, page = 1, limit = 20 } = req.query;
   const offset = (Math.max(1, +page) - 1) * Math.min(100, +limit);
   const sqlLimit = Math.min(100, +limit);
 
@@ -105,17 +149,17 @@ router.get('/', authOptional, (req, res) => {
 
   if (search) {
     conditions.push('(p.title LIKE ? OR p.tags LIKE ? OR u.username LIKE ?)');
-    const q = `%${search}%`;
+    const q = `%${escapeLike(search)}%`;
     params.push(q, q, q);
   }
-  if (year) {
-    conditions.push(`p.created_at LIKE '${year}-%'`);
+  // 标签以 JSON 数组文本落库（如 ["风景","人像"]），用精确匹配 "标签" 避免子串误命中
+  if (tag) {
+    conditions.push("p.tags LIKE ? ESCAPE '\\'");
+    params.push(`%"${escapeLike(tag)}"%`);
   }
-  if (year && month) {
-    conditions.push(`p.created_at LIKE '${year}-${String(month).padStart(2, '0')}-%'`);
-  }
-  if (year && month && day) {
-    conditions.push(`p.created_at LIKE '${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}%'`);
+  if (author) {
+    conditions.push('u.username = ?');
+    params.push(String(author));
   }
 
   if (conditions.length > 0) {
@@ -168,6 +212,42 @@ router.get('/mine', authRequired, (req, res) => {
   res.json({ photos: withShareTokens(result) });
 });
 
+/**
+ * 全部标签 / 全部作者（供页面顶部的筛选按钮使用）。
+ * 注意：必须定义在 `/:id` 之前，否则 "facets" 会被当成图片 id。
+ */
+router.get('/facets', authOptional, (_req, res) => {
+  const rows = db.prepare(`
+    SELECT p.tags AS tags, u.username AS uploader_name
+    FROM photos p
+    JOIN users u ON p.uploader_id = u.id
+  `).all();
+
+  const tagCount = new Map();
+  const authorCount = new Map();
+
+  for (const row of rows) {
+    let list = [];
+    try {
+      const parsed = JSON.parse(row.tags);
+      if (Array.isArray(parsed)) list = parsed;
+    } catch { /* 脏数据忽略 */ }
+    for (const t of list) {
+      const name = String(t == null ? '' : t).trim();
+      if (!name) continue;
+      tagCount.set(name, (tagCount.get(name) || 0) + 1);
+    }
+    const author = String(row.uploader_name == null ? '' : row.uploader_name).trim();
+    if (author) authorCount.set(author, (authorCount.get(author) || 0) + 1);
+  }
+
+  const toList = (map) => Array.from(map.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'zh'));
+
+  res.json({ tags: toList(tagCount), authors: toList(authorCount) });
+});
+
 router.get('/:id', authOptional, (req, res) => {
   const userId = req.user?.id;
   const photo = db.prepare(`
@@ -187,10 +267,13 @@ router.post('/', authRequired, upload.array('files'), (req, res) => {
     return res.status(400).json({ error: '请选择图片文件' });
   }
 
+  // 标签可选：不传 / 传空 => 存空数组
+  const tagsJson = JSON.stringify(normalizeTags(req.body && req.body.tags));
+
   const photos = [];
   const insert = db.prepare(`
     INSERT INTO photos (id, filename, original_name, title, description, tags, size, mime_type, width, height, uploader_id)
-    VALUES (?, ?, ?, ?, '', '[]', ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?)
   `);
 
   const insertMany = db.transaction((files) => {
@@ -203,10 +286,10 @@ router.post('/', authRequired, upload.array('files'), (req, res) => {
       const title = originalName.replace(/\.[^/.]+$/, '');
       const filepath = path.join(UPLOAD_DIR, file.filename);
       const dims = getImageDimensions(filepath);
-      insert.run(id, file.filename, originalName, title, file.size, file.mimetype, dims.width, dims.height, req.user.id);
+      insert.run(id, file.filename, originalName, title, tagsJson, file.size, file.mimetype, dims.width, dims.height, req.user.id);
       photos.push({
         id, filename: file.filename, original_name: originalName,
-        title, description: '', tags: '[]', size: file.size,
+        title, description: '', tags: tagsJson, size: file.size,
         mime_type: file.mimetype, width: dims.width, height: dims.height,
         uploader_id: req.user.id, uploader_name: req.user.username,
         likes_count: 0, downloads_count: 0, is_liked: 0,
