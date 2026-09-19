@@ -16,6 +16,41 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = path.join(__dirname, '..');
 
+// ---------------------------------------------------------------------------
+// .env 支持
+//
+// Node 自己不会读 .env，而项目里到处都按「有 .env 就生效」在用：
+// install.sh 会生成它、.env.example 就是给用户复制的、systemd 通过
+// EnvironmentFile 读它、Docker 通过 environment 传值。可手动 `npm start`、
+// PM2、nohup 这三条路都读不到 —— PM2 默认也不读 .env。
+// 后果很具体：同样是用一键脚本装好的站点，systemd 方式跑在 3000，
+// PM2 方式却悄悄跑在 3001，而脚本打印的访问地址是 3000。
+//
+// 这里补一个最小加载器，规则是「只填 process.env 里没有的键」：
+// 真实环境变量永远优先，所以 Docker 的 environment 与 systemd 的
+// EnvironmentFile 完全不受影响，只有确实没人设过的键才会从 .env 取值。
+// （不用 process.loadEnvFile() 是因为它要 Node 20.12+，而本项目支持 18+。）
+// ---------------------------------------------------------------------------
+loadEnvFile();
+
+function loadEnvFile() {
+  const file = path.join(SERVER_ROOT, '.env');
+  try {
+    if (!fs.existsSync(file)) return;
+    for (const line of fs.readFileSync(file, 'utf-8').split(/\r?\n/)) {
+      const m = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(line);
+      if (!m) continue;
+      let value = m[2];
+      if (value.length > 1 && (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (process.env[m[1]] === undefined) process.env[m[1]] = value;
+    }
+  } catch (e) {
+    console.warn(`[config] 读取 ${file} 失败: ${e.message}`);
+  }
+}
+
 export const IS_PROD = process.env.NODE_ENV === 'production';
 export const PORT = Number(process.env.PORT) || 3001;
 

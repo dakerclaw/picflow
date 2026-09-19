@@ -2,6 +2,7 @@ node_modules/
 .env
 picflow.db
 settings.json
+.jwt-secret
 data/
 uploads/*
 !uploads/.gitkeep
