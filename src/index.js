@@ -3,12 +3,13 @@ import cors from 'cors';
 import fs from 'fs';
 import path from 'path';
 import db from './database.js';
-import { PORT, DIST_DIR, UPLOAD_DIR, TRUST_PROXY } from './config.js';
+import { PORT, DIST_DIR, UPLOAD_DIR, TRUST_PROXY, IMAGE_CONCURRENCY } from './config.js';
 import authRoutes from './routes/auth.js';
 import photoRoutes from './routes/photos.js';
 import settingsRoutes from './routes/settings.js';
 import adminRoutes from './routes/admin.js';
 import { isThumbName, resolveThumbRequest, thumbnailStatus } from './thumbnails.js';
+import { imageGateScript } from './image-gate.js';
 import gateRoutes, {
   gateGuard,
   gateGuardAllowAdmin,
@@ -207,7 +208,16 @@ app.use('/uploads', gateGuardUploads, serveThumb, express.static(UPLOAD_DIR, {
 let indexHtmlCache = null;
 function readIndexHtml() {
   if (indexHtmlCache === null) {
-    indexHtmlCache = fs.readFileSync(path.join(DIST_DIR, 'index.html'), 'utf-8');
+    let html = fs.readFileSync(path.join(DIST_DIR, 'index.html'), 'utf-8');
+    // 「连接预留」脚本必须跑在应用 bundle 之前，所以插在 <script type="module"> 前面。
+    // 内联脚本在解析时立即执行，而 type="module" 是延迟执行的，顺序天然正确。
+    const gate = imageGateScript(IMAGE_CONCURRENCY);
+    if (gate) {
+      html = html.includes('<script type="module"')
+        ? html.replace('<script type="module"', gate + '\n    <script type="module"')
+        : html.replace('</head>', gate + '\n  </head>');
+    }
+    indexHtmlCache = html;
   }
   return indexHtmlCache;
 }

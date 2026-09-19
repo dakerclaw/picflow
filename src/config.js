@@ -67,6 +67,20 @@ export const SETTINGS_JSON_PATH = process.env.SETTINGS_JSON_PATH || path.join(DA
 export const DIST_DIR = path.join(SERVER_ROOT, 'dist');
 
 /**
+ * 列表缩略图的同时下载数上限（0 = 关闭，走浏览器原生行为）。
+ *
+ * 为什么需要：浏览器对同一域名只有 6 条并发连接。列表页一次要下 20 张图，
+ * 把 6 条占满之后，页面上的接口请求（登录、点赞、打开管理后台）就得在
+ * 客户端排队 —— 实测能排到 15 秒，而服务端处理它只要 2 毫秒。
+ * 压到 4 就永远留出 2 条连接给接口，代价是图片整体慢一点点。
+ * 详见 src/image-gate.js。
+ */
+export const IMAGE_CONCURRENCY = process.env.IMAGE_CONCURRENCY === undefined ||
+  process.env.IMAGE_CONCURRENCY === ''
+  ? 4
+  : Number(process.env.IMAGE_CONCURRENCY);
+
+/**
  * 闸门（整站访问密码）相关设置键。
  *
  * 集中在这里的原因：这几个键是敏感配置，既不能出现在公开的 /api/settings
