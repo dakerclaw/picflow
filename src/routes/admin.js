@@ -5,6 +5,7 @@ import db from '../database.js';
 import { authRequired } from '../middleware/auth.js';
 import { readGateSettings, writeGateSettings } from './gate.js';
 import { UPLOAD_DIR } from '../config.js';
+import { deleteThumbFor } from '../thumbnails.js';
 
 const router = Router();
 
@@ -47,12 +48,12 @@ router.delete('/users/:id', adminRequired, (req, res) => {
     try {
       const fp = path.join(UPLOAD_DIR, p.filename);
       if (fs.existsSync(fp)) fs.unlinkSync(fp);
-      // 同时尝试删除 thumb_ 前缀的缩略图
-      const tp = path.join(UPLOAD_DIR, 'thumb_' + p.filename);
-      if (fs.existsSync(tp)) fs.unlinkSync(tp);
     } catch (e) {
-      console.warn('删除图片文件失败:', e.message);
+      console.warn(`删除图片文件失败（${p.filename}）: ${e.message}`);
     }
+    // 缩略图的命名规则统一由 thumbnails.js 决定（原来是拼 'thumb_' + 原文件名，
+    // 而实际生成的是 .jpg，对不上 → 删了原图，缩略图会永远留在磁盘上）
+    deleteThumbFor(p.filename);
   }
 
   // 删除数据库记录（photos 有 ON DELETE CASCADE 的 likes）

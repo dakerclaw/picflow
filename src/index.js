@@ -8,6 +8,7 @@ import authRoutes from './routes/auth.js';
 import photoRoutes from './routes/photos.js';
 import settingsRoutes from './routes/settings.js';
 import adminRoutes from './routes/admin.js';
+import { isThumbName, resolveThumbRequest, thumbnailStatus } from './thumbnails.js';
 import gateRoutes, {
   gateGuard,
   gateGuardAllowAdmin,
@@ -75,7 +76,9 @@ app.use('/api', gateGuard);
 app.use((_req, res, next) => {
   const origEnd = res.end;
   res.end = function (...args) {
-    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(_req.method)) {
+    // 只在真的改过数据时才落盘。以前是无条件保存，于是「登录」这种纯读的
+    // POST 也会把整库导出并写一遍磁盘，白白拖慢一次本来几毫秒就能完成的请求。
+    if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(_req.method) && db.isDirty()) {
       db.save();
     }
     return origEnd.apply(this, args);
@@ -118,6 +121,18 @@ const INLINE_UPLOAD_TYPES = {
 };
 
 /**
+ * uploads 里文件名的前半段是上传时生成的随机 UUID，内容一旦落盘就不再变化
+ * （改图 = 换文件名），所以可以放心让浏览器长缓存 —— 这是复访时页面秒开的关键。
+ *
+ * 为什么必须显式覆盖：闸门开启时全局中间件会统一打上 `no-store`，
+ * 那会让每次打开列表都重新下载全部图片。
+ * 用 private 是因为开启访问密码时 URL 上会带 site_token，只应缓存在本人机器上。
+ */
+const IMMUTABLE_CACHE = 'private, max-age=31536000, immutable';
+/** 回退成原图、以及非图片的附件：只能短缓存，否则修好之后换不掉 */
+const SHORT_CACHE = 'private, max-age=300';
+
+/**
  * /uploads 的响应头策略。
  *
  * 为什么不能直接用 express.static 的默认行为：它按扩展名决定 Content-Type，
@@ -129,7 +144,7 @@ const INLINE_UPLOAD_TYPES = {
  *   2. nosniff 禁止浏览器自行猜测类型；
  *   3. CSP sandbox 让即使被打开的可执行文档也无法运行脚本、发起请求。
  */
-function setUploadHeaders(res, filePath) {
+function setUploadHeaders(res, filePath, { immutable = true } = {}) {
   const ext = path.extname(filePath).toLowerCase();
   res.set('X-Content-Type-Options', 'nosniff');
   res.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
@@ -138,17 +153,50 @@ function setUploadHeaders(res, filePath) {
   if (inlineType) {
     res.set('Content-Type', inlineType);
     res.set('Content-Disposition', 'inline');
+    res.set('Cache-Control', immutable ? IMMUTABLE_CACHE : SHORT_CACHE);
   } else {
     res.set('Content-Type', 'application/octet-stream');
     res.set('Content-Disposition', 'attachment');
+    res.set('Cache-Control', SHORT_CACHE);
   }
 }
 
+/**
+ * 缩略图路由：`/uploads/thumb_<原名去扩展名>.jpg`
+ *
+ * 放在 express.static 之前按需生成 —— 这样「历史照片」不需要额外的批量
+ * 预处理步骤，谁来访问谁触发一次生成，生成完就一直命中磁盘上的文件。
+ * 生成失败（含 sharp 未安装）时回退发送原图：功能不受影响，只是慢一些。
+ *
+ * 注意必须挂在 gateGuardUploads **之后**：缩略图和原图是同一批私有图片，
+ * 不能因为换了个文件名就成了免鉴权的旁路。
+ */
+function serveThumb(req, res, next) {
+  let name;
+  try {
+    name = decodeURIComponent(String(req.path).replace(/^\/+/, ''));
+  } catch {
+    return res.status(400).end();
+  }
+  if (!isThumbName(name)) return next();
+
+  resolveThumbRequest(name)
+    .then((r) => {
+      if (!r) return res.status(404).type('text/plain').send('缩略图不存在');
+      setUploadHeaders(res, r.file, { immutable: !r.fellBack });
+      return res.sendFile(r.file);
+    })
+    .catch((e) => {
+      console.error('[thumb] 缩略图请求失败:', (e && e.stack) || e);
+      if (!res.headersSent) res.status(500).type('text/plain').send('缩略图生成失败');
+    });
+}
+
 // 图片文件同样受闸门保护（<img> 无法带请求头，改用 site_token 查询参数）
-app.use('/uploads', gateGuardUploads, express.static(UPLOAD_DIR, {
+app.use('/uploads', gateGuardUploads, serveThumb, express.static(UPLOAD_DIR, {
   index: false,
   dotfiles: 'deny',
-  setHeaders: setUploadHeaders,
+  setHeaders: (res, filePath) => setUploadHeaders(res, filePath),
 }));
 
 // ---------------------------------------------------------------------------
@@ -342,4 +390,8 @@ for (const sig of ['SIGTERM', 'SIGINT']) {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`PicFlow server running on http://0.0.0.0:${PORT}`);
   console.log(`[gate] 全局访问密码: ${isGateEnabled() ? '已启用' : '未启用'}`);
+  // sharp 是异步加载的，给它一点时间再报状态（缺了也不影响功能，只是慢）
+  setTimeout(() => {
+    console.log(`[thumb] 缩略图: ${thumbnailStatus() === 'ready' ? '已启用' : '不可用（列表将使用原图）'}`);
+  }, 1200).unref();
 });

@@ -7,6 +7,7 @@ import db from '../database.js';
 import { authRequired, authOptional } from '../middleware/auth.js';
 import { signShareToken } from './gate.js';
 import { UPLOAD_DIR } from '../config.js';
+import { warmThumb, deleteThumbFor } from '../thumbnails.js';
 
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
@@ -476,6 +477,11 @@ router.post('/', authRequired, uploadFiles, (req, res) => {
     return res.status(500).json({ error: `保存图片信息失败：${(e && e.message) || e}` });
   }
 
+  // 上传完就把缩略图排进后台队列：列表页马上会来要它们，先做掉省一次等待。
+  // 刻意不 await —— 一轮传 20 张大图时，让用户多等几秒只为看到缩略图不值得，
+  // 真没赶上也没关系，「按需生成」那条路会自动兜住。
+  for (const file of accepted) warmThumb(file.filename);
+
   res.status(201).json({ photos: withShareTokens(photos) });
 });
 
@@ -514,7 +520,14 @@ router.delete('/:id', authRequired, (req, res) => {
   if (photo.uploader_id !== req.user.id) return res.status(403).json({ error: '无权删除此图片' });
 
   const filepath = path.join(UPLOAD_DIR, photo.filename);
-  try { if (fs.existsSync(filepath)) fs.unlinkSync(filepath); } catch { /* ignore */ }
+  try {
+    if (fs.existsSync(filepath)) fs.unlinkSync(filepath);
+  } catch (e) {
+    // 不能静默吞掉：一旦这里失败，用户看到的是「列表里没了、磁盘上还在」，
+    // 而磁盘占满之前不会有任何提示。
+    console.warn(`[photos] 删除文件失败（${photo.filename}）: ${e.message}`);
+  }
+  deleteThumbFor(photo.filename);
 
   db.prepare('DELETE FROM photos WHERE id = ?').run(req.params.id);
   res.json({ ok: true });

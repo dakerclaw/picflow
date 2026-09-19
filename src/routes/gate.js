@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import db from '../database.js';
 import { JWT_SECRET, GATE_SETTING_KEYS } from '../config.js';
+import { isThumbName, baseOfThumb } from '../thumbnails.js';
 
 const router = Router();
 
@@ -282,7 +283,12 @@ function shareTokenCoversFile(req, filePath) {
 
   try {
     const row = db.prepare('SELECT filename FROM photos WHERE id = ?').get(String(photoId));
-    return !!row && String(row.filename) === name;
+    if (!row) return false;
+    const target = String(row.filename);
+    if (target === name) return true;
+    // 列表页请求的是缩略图（thumb_<基名>.jpg），它和原图属于同一张照片，
+    // 同一张分享令牌当然也该覆盖 —— 否则分享页里的图在加密站点下加载不出来。
+    return isThumbName(name) && baseOfThumb(name) === target.replace(/\.[^.]+$/, '');
   } catch {
     return false;
   }

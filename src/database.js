@@ -5,6 +5,16 @@ import { DB_PATH, SETTINGS_JSON_PATH, GATE_SETTING_KEY_SET as GATE_KEYS } from '
 
 let db;
 
+/**
+ * 「有没有还没落盘的改动」。
+ *
+ * 为什么需要：写操作原来一律在响应结束时无脑落盘一次（见 index.js 的 res.end
+ * 钩子），于是**登录**这种完全不写库的 POST 也会触发一次「导出整库 + 写盘」。
+ * 库小的时候只是白花几毫秒，库大了（几万张照片）就是几十毫秒纯浪费，
+ * 而且这段时间是同步阻塞的，所有请求都得排队。
+ */
+let dirty = false;
+
 /** 与数据库同目录的临时文件，保证 rename 是同文件系统内的原子替换 */
 const DB_TMP_PATH = DB_PATH + '.tmp';
 
@@ -34,6 +44,7 @@ function saveDb() {
       return;
     }
     fs.renameSync(DB_TMP_PATH, DB_PATH);
+    dirty = false;
     console.log(`[db] saved ${DB_PATH} (${buf.length} bytes)`);
   } catch (e) {
     console.error('[db] Failed to save database:', e.message);
@@ -91,6 +102,7 @@ class Statement {
    */
   run(...params) {
     this.db.run(this.sql, params.length === 1 && Array.isArray(params[0]) ? params[0] : params);
+    dirty = true;
     return { changes: this.db.getRowsModified() };
   }
 
@@ -335,7 +347,7 @@ async function openDatabase() {
 
   return {
     prepare: (sql) => new Statement(db, sql),
-    exec: (sql) => db.run(sql),
+    exec: (sql) => { dirty = true; return db.run(sql); },
     transaction: (fn) => (...args) => {
       db.run('BEGIN');
       try {
@@ -350,6 +362,7 @@ async function openDatabase() {
     },
     close: () => { saveDb(); db.close(); },
     save: saveDb,
+    isDirty: () => dirty,
     saveSettingsJson,
     loadSettingsJson,
   };
