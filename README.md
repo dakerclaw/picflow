@@ -218,18 +218,41 @@ curl -X PUT http://localhost:3000/api/admin/site-password \
 
 ### ⚠️ 忘记密码怎么办
 
-密码以 bcrypt 哈希存储，无法找回，只能重置。任选一种：
+密码以 bcrypt 哈希存储，无法反推，只能重置。
+
+> **先搞清楚改动该落在哪**：站点设置真正生效的位置是**数据库**
+> （`data/picflow.db` 的 `settings` 表）。`data/settings.json` 只是导出备份，
+> **改它或删它都不会改变站点行为**，重启也无效。
+
+**推荐做法：清掉数据库里的密码设置**
 
 ```bash
-# 方式一：删除 settings.json 里的两个键后重启服务
-#   site_password_hash
-#   site_password_enabled
+cd <项目目录>/server
+docker compose stop                    # 先停容器，避免它把内存里的旧数据写回文件
 
-# 方式二：直接删除 settings.json（会一并重置其他站点设置）
-rm settings.json && pm2 restart picflow
+docker compose run --rm picflow node --input-type=module -e "
+import db from './src/database.js';
+const r = db.prepare(\"DELETE FROM settings WHERE key IN ('site_password_hash','site_password_enabled')\").run();
+db.save(); console.log('deleted rows =', r.changes);"
+
+docker compose start                   # 闸门回到默认的「关闭」状态
 ```
 
-> Docker 部署时 `settings.json` 位于 `data/` 目录（已挂载为数据卷）。
+只删这两行，其他站点设置与所有照片都不受影响。重启后直接访问站点，
+再进「管理后台 → 站点设置」重新设一个新密码即可。
+
+> `docker compose run --rm picflow …` 会用同一套挂载卷（`./data`、`./uploads`）
+> 跑一个一次性容器来执行这段脚本，跑完即销毁，不碰照片数据。
+
+**另一种情况：浏览器里还留着管理员登录态。**
+闸门对管理员令牌放行（否则会出现「管理员没解锁 → 改不掉密码 / 关不掉闸门」的死锁），
+所以可以直接请求 `PUT /api/admin/site-password`，请求体 `{"enabled":false}`；
+令牌在 DevTools → Application → Local Storage 里找。
+
+> 服务器上若装有 `sqlite3` 命令行，也可以直接改这个文件
+> （`data/picflow.db` 是标准 SQLite 格式）：
+> `sqlite3 data/picflow.db "DELETE FROM settings WHERE key IN ('site_password_hash','site_password_enabled');"`
+> —— 同样要先 `docker compose stop`。
 
 ### ⚠️ 输入密码后页面空白
 
