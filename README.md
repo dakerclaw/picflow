@@ -72,14 +72,6 @@ cd picflow
 bash install.sh
 ```
 
-安装脚本会自动完成：
-1. 检测并安装 Node.js 22+
-2. 安装 npm 依赖
-3. 生成 `.env` 配置（JWT 密钥随机生成）
-4. 创建上传目录和数据库
-5. 引导选择启动方式（PM2 / systemd / nohup）
-6. 配置防火墙
-
 ## 🐳 Docker 部署
 
 ```bash
@@ -103,33 +95,7 @@ docker compose up -d --build
 
 > 数据库文件和上传的图片存储在 `data/` 和 `uploads/` 目录，更新不会丢失数据。
 
-### PM2 部署更新
 
-```bash
-cd ~/picflow
-git pull
-npm install
-pm2 restart picflow
-```
-
-### systemd 部署更新
-
-```bash
-cd ~/picflow
-git pull
-npm install
-sudo systemctl restart picflow
-```
-
-### nohup 部署更新
-
-```bash
-cd ~/picflow
-git pull
-npm install
-kill $(pgrep -f "node src/index.js")
-nohup npm start > picflow.log 2>&1 &
-```
 
 ## 🗑 卸载方式
 
@@ -143,25 +109,6 @@ rm -rf picflow
 
 > `--rmi all` 删除镜像，`--volumes` 删除数据卷。**此操作会删除所有图片和数据库，请提前备份！**
 
-### PM2 卸载
-
-```bash
-pm2 stop picflow
-pm2 delete picflow
-cd ..
-rm -rf picflow
-```
-
-### systemd 卸载
-
-```bash
-sudo systemctl stop picflow
-sudo systemctl disable picflow
-sudo rm /etc/systemd/system/picflow.service
-sudo systemctl daemon-reload
-cd ..
-rm -rf picflow
-```
 
 
 ## 🔧 环境变量
@@ -356,7 +303,7 @@ rm settings.json && pm2 restart picflow
 ## 🖥 使用指南
 
 ### 浏览图片
-- 首页展示瀑布流，支持滚动加载
+- 首页展示瀑布流
 - 顶部搜索框可按名称/标签/作者实时筛
 - 搜索框下方有「标签」「作者」两个按钮，点开即可看到**全站所有标签 / 所有作者**（带图片数量），点选即筛选，再点一次取消；也可用「清除筛选」一键回到全部
 - 灯箱里会显示当前照片的标签
@@ -406,7 +353,7 @@ rm settings.json && pm2 restart picflow
 ### 📄 列表分页
 
 首页默认一次加载 **20 张**，网格下方出现「加载更多」按钮，点击即追加下一页；
-全部加载完后按钮自动消失（不会一直挂着一个无效按钮）。
+全部加载完后按钮自动消失。
 
 - 请求形如 `GET /api/photos?page=2&limit=20`，`limit` 上限 100
 - 返回 `{ photos, total, page, totalPages }`，按钮显隐由 `page < totalPages` 决定
@@ -429,24 +376,6 @@ rm settings.json && pm2 restart picflow
 > 新页自然出现在旧页下方。切片的代价是点击索引会变成「页内下标」，
 > 所以传 `offset` 给网格组件，点击时补回全量下标，灯箱才不会打开成别的照片。
 
-## 🛠 本地开发
-
-### 前端开发
-
-```bash
-cd app
-npm install
-npm run dev        # 启动 Vite 开发服务器
-```
-
-### 后端开发
-
-```bash
-npm install
-npm run dev        # 启动 Node.js 开发服务器
-```
-
-> 前端 dev server 已配置 proxy，`/api` 和 `/uploads` 请求自动转发到 `http://localhost:3001`
 
 ## 📄 License
 
