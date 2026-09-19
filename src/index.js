@@ -76,6 +76,21 @@ app.use('/api/photos', photoRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/admin', adminRoutes);
 
+/**
+ * /api 下的兜底错误处理：任何未被路由自己处理的异常，都必须以 JSON 返回。
+ *
+ * 为什么不能省：Express 默认错误处理返回的是一页 HTML，前端
+ * `await res.json()` 会抛「Unexpected token '<'」，用户看到的原因和真实故障
+ * 完全无关（例如明明是数据库写入失败，却报一个 JSON 解析错误）。
+ * 放在路由之后、静态资源之前，才不会影响页面与图片的请求。
+ */
+app.use('/api', (err, req, res, _next) => {
+  console.error(`[api] ${req.method} ${req.originalUrl} 未捕获异常:`, (err && err.stack) || err);
+  if (res.headersSent) return;
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({ error: (err && err.message) || '服务器内部错误' });
+});
+
 // 图片文件同样受闸门保护（<img> 无法带请求头，改用 site_token 查询参数）
 app.use('/uploads', gateGuardUploads, express.static(path.join(__dirname, '..', 'uploads')));
 

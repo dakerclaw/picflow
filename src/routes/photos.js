@@ -30,6 +30,27 @@ const upload = multer({
   },
 });
 
+/**
+ * 包一层 multer，把它抛出的错误转成 JSON。
+ *
+ * 为什么必须包：multer 出错时是 next(err)，走的是 Express 的**默认错误处理**，
+ * 返回的是一整页 HTML。前端 `await res.json()` 会直接抛
+ * 「Unexpected token '<'」，用户看到一个和真实原因毫无关系的报错。
+ * 尺寸超限、格式不对这类最常见的失败，必须让前端拿到可读的中文原因。
+ */
+function uploadFiles(req, res, next) {
+  upload.array('files')(req, res, (err) => {
+    if (!err) return next();
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ error: '单张图片不能超过 50MB' });
+    }
+    if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+      return res.status(400).json({ error: '文件字段名必须是 files' });
+    }
+    return res.status(400).json({ error: err.message || '图片上传失败' });
+  });
+}
+
 // 纯 JS 图片尺寸解析（零依赖）
 function getImageDimensions(filepath) {
   try {
@@ -262,7 +283,7 @@ router.get('/:id', authOptional, (req, res) => {
   res.json({ photo: withShareToken(photo) });
 });
 
-router.post('/', authRequired, upload.array('files'), (req, res) => {
+router.post('/', authRequired, uploadFiles, (req, res) => {
   if (!req.files || req.files.length === 0) {
     return res.status(400).json({ error: '请选择图片文件' });
   }
@@ -298,7 +319,17 @@ router.post('/', authRequired, upload.array('files'), (req, res) => {
     }
   });
 
-  insertMany(req.files);
+  try {
+    insertMany(req.files);
+  } catch (e) {
+    // 落库失败必须把已经写到磁盘的文件清掉，否则 uploads 里会堆一堆没人认领的孤儿文件
+    for (const f of req.files) {
+      try { fs.unlinkSync(path.join(UPLOAD_DIR, f.filename)); } catch { /* ignore */ }
+    }
+    console.error(`[photos] 入库失败（tags=${tagsJson}，文件数=${req.files.length}）:`, (e && e.stack) || e);
+    return res.status(500).json({ error: `保存图片信息失败：${(e && e.message) || e}` });
+  }
+
   res.status(201).json({ photos: withShareTokens(photos) });
 });
 
